@@ -85,17 +85,12 @@ describe("extension wiring", () => {
 		assert.equal(activity?.type, "pi-summarize");
 		assert.deepEqual(activity?.data.toolCallIds, ["t1"]);
 
-		await handlers.agent_end(
-			{
-				type: "agent_end",
-				messages: [
-					{ role: "user", content: "fix sync" },
-					{ role: "assistant", content: [{ type: "text", text: "On it." }] },
-				],
-			},
-			ctx,
-		);
-		await sleep(20);
+		await handlers.agent_end({ type: "agent_end", messages: [] }, ctx);
+		ctx.sessionManager.getBranch = () => [
+			{ type: "message", message: { role: "user", content: "fix sync" } },
+			{ type: "message", message: { role: "assistant", content: [{ type: "text", text: "On it." }] } },
+		];
+		await handlers.agent_settled({ type: "agent_settled", aborted: false }, ctx);
 
 		assert.equal(working.at(-1), undefined, "default working line restored");
 		assert.deepEqual(names, ["Fix Sync Adapter"]);
@@ -106,10 +101,11 @@ describe("extension wiring", () => {
 	it("never renames a session the user already named", async () => {
 		reset("My manual name");
 		await handlers.session_start({ reason: "resume" }, ctx);
-		await handlers.agent_end(
-			{ type: "agent_end", messages: [{ role: "user", content: "hi" }, { role: "assistant", content: "yo" }] },
-			ctx,
-		);
+		ctx.sessionManager.getBranch = () => [
+			{ type: "message", message: { role: "user", content: "hi" } },
+			{ type: "message", message: { role: "assistant", content: "yo" } },
+		];
+		await handlers.agent_settled({ type: "agent_settled", aborted: false }, ctx);
 		await sleep(20);
 		assert.deepEqual(names, []);
 		assert.equal(streamCalls.filter((c) => c.prompt.includes("2-4 word title")).length, 0);

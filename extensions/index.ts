@@ -102,35 +102,41 @@ export default function (pi: ExtensionAPI) {
 		if (cfg.activity) tracker?.toolEnd();
 	});
 
-	pi.on("agent_end", async (event, ctx) => {
+	pi.on("agent_end", async (_event, ctx) => {
 		live = ctx;
 		if (cfg.activity) tracker?.stop();
+	});
+
+	// agent_settled, not agent_end: print mode can exit right after agent_end, and this must finish first.
+	pi.on("agent_settled", async (_event, ctx) => {
+		live = ctx;
 		if (!cfg.title || titling) return;
 
 		const branch = ctx.sessionManager.getBranch();
 		const alreadyTitled = branch.some(
 			(e) => e.type === "custom" && e.customType === "pi-summarize" && (e.data as { kind?: string })?.kind === "title",
 		);
-		const messages = event.messages as { role?: string; content?: unknown }[];
+		const messages = branch.flatMap((e) => (e.type === "message" ? [e.message as { role?: string; content?: unknown }] : []));
 		const firstUser = messages.find((m) => m.role === "user");
 		const firstAssistant = messages.find((m) => m.role === "assistant");
 
 		titling = true;
-		void autoTitle({
-			hasReply: Boolean(firstAssistant),
-			alreadyTitled,
-			getName: () => pi.getSessionName(),
-			setName: (name) => pi.setSessionName(name),
-			record: (entry) => pi.appendEntry("pi-summarize", entry),
-			complete: (prompt) =>
-				complete(live!, cfg, prompt, AbortSignal.timeout(15_000), 30),
-			firstUser: textOf(firstUser?.content),
-			firstAssistant: textOf(firstAssistant?.content),
-		})
-			.catch(() => undefined)
-			.finally(() => {
-				titling = false;
+		try {
+			await autoTitle({
+				hasReply: Boolean(firstAssistant),
+				alreadyTitled,
+				getName: () => pi.getSessionName(),
+				setName: (name) => pi.setSessionName(name),
+				record: (entry) => pi.appendEntry("pi-summarize", entry),
+				complete: (prompt) => complete(live!, cfg, prompt, AbortSignal.timeout(15_000), 30),
+				firstUser: textOf(firstUser?.content),
+				firstAssistant: textOf(firstAssistant?.content),
 			});
+		} catch {
+			// titling is best-effort
+		} finally {
+			titling = false;
+		}
 	});
 
 	pi.on("session_shutdown", async () => {
