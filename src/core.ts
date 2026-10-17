@@ -252,9 +252,9 @@ export class ActivityTracker {
 		} catch {
 			text = undefined;
 		}
-		const line = text?.toUpperCase() === "SAME" ? last : text;
+		if (text?.toUpperCase() === "SAME" && last) return; // the previous line already covers these tools
 		try {
-			this.opts.record({ text: line ?? fallbackLine(tool), at: Date.now(), turn, source: line ? "model" : "fallback", toolCallIds: ids, thinking, tools });
+			this.opts.record({ text: text ?? fallbackLine(tool), at: Date.now(), turn, source: text ? "model" : "fallback", toolCallIds: ids, thinking, tools });
 		} catch {
 			// session may already be gone (shutdown)
 		}
