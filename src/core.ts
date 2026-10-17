@@ -171,7 +171,7 @@ export class ActivityTracker {
 		this.progress = undefined;
 		this.toolSince = Date.now();
 		this.startBeat();
-		this.tools = [...this.tools, fallbackLine(this.lastTool).replace(/…$/, "")].slice(-4);
+		this.tools = [...this.tools, `${name}(${clip(JSON.stringify(args ?? {}), 160)})`].slice(-4);
 		this.toolCallIds.push(toolCallId);
 		void this.flush();
 	}
@@ -257,14 +257,18 @@ export class ActivityTracker {
 
 	private prompt(): string {
 		return [
-			"You narrate what a coding agent is doing right now.",
-			"Reply with ONE line, at most 12 words, present-progressive. Be specific: name the file, command, or subagent task, e.g. \"Reading real.js to find the busy-line handler\".",
+			"You narrate the GOAL a coding agent is pursuing right now, not the command it runs.",
+			"Infer intent from the user's request, the agent's own words, and its recent tool calls (latest last).",
+			"Never name a shell command, flag, or tool; say why it is being run.",
+			"Good: \"Checking why the sync test fails\", \"Finding where titles get set\", \"Delegating a search for config loaders\".",
+			"Bad: \"Running git status\", \"Running bash\", \"Reading core.ts\".",
+			"Reply with ONE line, at most 12 words, present-progressive.",
 			"No quotes, no preamble, no trailing period. Output only the line.",
 			this.last ? `Current line: ${this.last}\nIf it still describes the work, reply exactly SAME.` : "",
 			"",
 			"<context>",
 			this.userPrompt ? `User asked: ${clip(this.userPrompt, 300)}` : "",
-			this.tools.length ? `Recent tools: ${this.tools.join("; ")}` : "",
+			this.tools.length ? `Recent tool calls (latest last): ${this.tools.join("; ")}` : "",
 			this.progress ? `Running tool progress (e.g. what a subagent is doing now): ${this.progress}` : "",
 			this.text.trim() ? `Assistant text tail: ${clip(this.text, 600)}` : "",
 			this.thinking.trim() ? `Thinking tail: ${clip(this.thinking, 300)}` : "",
