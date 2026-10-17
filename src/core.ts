@@ -57,6 +57,20 @@ export function fallbackLine(tool?: ToolActivity): string {
 	return `Running ${tool.name}…`;
 }
 
+const words = (text: string): Set<string> =>
+	new Set(text.toLowerCase().replace(/[^a-z0-9_\s-]/g, " ").split(/\s+/).filter((w) => w.length > 2));
+
+/** True when two lines say essentially the same thing (word overlap), so the newer one adds nothing. */
+export function similarLine(a: string | undefined, b: string): boolean {
+	if (!a) return false;
+	const x = words(a);
+	const y = words(b);
+	if (!x.size || !y.size) return a.trim() === b.trim();
+	let shared = 0;
+	for (const w of x) if (y.has(w)) shared++;
+	return shared / Math.min(x.size, y.size) >= 0.75;
+}
+
 /** Accept one short line; reject anything over 8 words so the fallback is used instead. */
 export function cleanLine(raw: string): string | undefined {
 	const line = raw
@@ -66,6 +80,7 @@ export function cleanLine(raw: string): string | undefined {
 		?.replace(/^["'`*#>\-\s]+|["'`*\s]+$/g, "")
 		.replace(/\.$/, "");
 	if (!line || line.split(/\s+/).length > 8) return undefined;
+	if (/^same$/i.test(line)) return "SAME";
 	return clip(line, 80);
 }
 
@@ -185,6 +200,7 @@ export class ActivityTracker {
 		this.inflight = undefined;
 		const source = text ? "model" : "fallback";
 		const line = text ?? fallbackLine(this.lastTool);
+		if (line.toUpperCase() === "SAME" || similarLine(this.last, line)) return; // keep ids for the next line
 		if (line === this.last) return;
 		this.last = line;
 		this.toolCallIds = [];
@@ -197,6 +213,7 @@ export class ActivityTracker {
 			"You narrate what a coding agent is doing right now.",
 			"Reply with ONE line, at most 8 words, present-progressive, e.g. \"Checking the sync adapter…\".",
 			"No quotes, no preamble, no trailing period. Output only the line.",
+			this.last ? `Current line: ${this.last}\nIf it still describes the work, reply exactly SAME.` : "",
 			"",
 			"<context>",
 			this.userPrompt ? `User asked: ${clip(this.userPrompt, 300)}` : "",

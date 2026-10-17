@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { ActivityTracker, autoTitle, cleanLine, cleanTitle, fallbackLine, resolveConfig } from "../src/core.ts";
+import { ActivityTracker, autoTitle, cleanLine, cleanTitle, fallbackLine, resolveConfig, similarLine } from "../src/core.ts";
 
 const flush = () => new Promise((r) => setImmediate(r));
 
@@ -221,5 +221,13 @@ describe("cleanTitle", () => {
 	it("keeps at most four words", () => {
 		assert.equal(cleanTitle("Refactor the big sync adapter module"), "Refactor the big sync");
 		assert.equal(cleanTitle("**Sync Fix**"), "Sync Fix");
+	});
+});
+
+describe("similarLine", () => {
+	it("treats near-duplicate narration as the same", () => {
+		assert.equal(similarLine("Tracing tool_execution_start events in the pi SDK", "Tracing tool_execution_start events in pi SDK"), true);
+		assert.equal(similarLine("Reading files.js", "Running npm test"), false);
+		assert.equal(similarLine(undefined, "Reading files.js"), false);
 	});
 });
