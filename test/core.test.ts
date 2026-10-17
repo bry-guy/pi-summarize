@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { ActivityTracker, autoTitle, cleanLine, cleanTitle, fallbackLine, progressOf, resolveConfig, similarLine } from "../src/core.ts";
+import { ActivityTracker, autoTitle, cleanLine, cleanTitle, fallbackLine, resolveConfig, similarLine } from "../src/core.ts";
 
 const flush = () => new Promise((r) => setImmediate(r));
 
@@ -231,36 +231,5 @@ describe("similarLine", () => {
 		assert.equal(similarLine("Tracing tool_execution_start events in the pi SDK", "Tracing tool_execution_start events in pi SDK"), true);
 		assert.equal(similarLine("Reading files.js", "Running npm test"), false);
 		assert.equal(similarLine(undefined, "Reading files.js"), false);
-	});
-});
-
-describe("subagent progress", () => {
-	it("reads pi-subagents activity and ignores spinner-only updates", () => {
-		const a = progressOf({ details: { activity: "reading real.js", toolUses: 3, spinnerFrame: 1 } });
-		assert.equal(a, "reading real.js · 3 tool uses");
-		assert.equal(progressOf({ content: [{ type: "text", text: "line1\nok 5 tests" }] }), "line1 ok 5 tests");
-		assert.equal(progressOf(undefined), undefined);
-	});
-
-	it("feeds subagent progress into the prompt and the fallback", async () => {
-		const d = deferred();
-		const { tracker, shown } = harness(d.complete, { debounceMs: 10 });
-		tracker.toolStart("t1", "Agent", { description: "Explore busy line" });
-		d.calls[0].reject(new Error("x"));
-		await flush();
-		assert.equal(shown.at(-1), "Subagent: Explore busy line…");
-		tracker.toolUpdate({ details: { activity: "grep busy", toolUses: 4 } });
-		tracker.toolUpdate({ details: { activity: "grep busy", toolUses: 4 } });
-		await new Promise((r) => setTimeout(r, 30));
-		assert.equal(d.calls.length, 2);
-		assert.match(d.calls[1].prompt, /grep busy · 4 tool uses/);
-		d.calls[1].reject(new Error("x"));
-		await flush();
-		assert.equal(shown.at(-1), "Subagent: Explore busy line: grep busy · 4 tool uses");
-		tracker.stop();
-	});
-
-	it("names background waits", () => {
-		assert.equal(fallbackLine({ name: "get_subagent_result", args: {} }), "Waiting on a subagent…");
 	});
 });

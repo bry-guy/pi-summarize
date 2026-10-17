@@ -54,9 +54,6 @@ export function fallbackLine(tool?: ToolActivity): string {
 	if (name === "write" && path) return `Writing ${baseName(path)}…`;
 	if (["grep", "find", "glob"].includes(name)) return `Searching ${clip(str(args.pattern) ?? path ?? "files", 30)}…`;
 	if (name === "ls") return `Listing ${clip(path ?? "files", 30)}…`;
-	const task = str(args.description) ?? str(args.prompt);
-	if (name === "agent" || name === "subagent") return `Subagent: ${clip(task ?? "working", 40)}…`;
-	if (name.includes("subagent") || name.includes("result")) return `Waiting on ${clip(task ?? "a subagent", 40)}…`;
 	return `Running ${tool.name}…`;
 }
 
@@ -109,16 +106,6 @@ export interface TrackerOptions {
 	heartbeatMs?: number;
 }
 
-/** Progress text from a tool's partial result: pi-subagents' details.activity/toolUses, else the output tail. */
-export function progressOf(partial: unknown): string | undefined {
-	const p = partial as { details?: { activity?: unknown; toolUses?: unknown }; content?: { type?: string; text?: string }[] } | undefined;
-	const activity = str(p?.details?.activity);
-	const uses = typeof p?.details?.toolUses === "number" ? p.details.toolUses : undefined;
-	if (activity || uses !== undefined) return [activity && clip(activity, 120), uses !== undefined ? `${uses} tool uses` : ""].filter(Boolean).join(" · ");
-	const text = p?.content?.filter((c) => c.type === "text").map((c) => c.text ?? "").join("\n");
-	return text?.trim() ? clip(tail(text, 200), 200) : undefined;
-}
-
 export class ActivityTracker {
 	private userPrompt?: string;
 	private turn = 0;
@@ -131,7 +118,6 @@ export class ActivityTracker {
 	private inflight?: AbortController;
 	private seq = 0;
 	private last?: string;
-	private progress?: string;
 	private toolSince?: number;
 	private beat?: ReturnType<typeof setInterval>;
 
@@ -168,7 +154,6 @@ export class ActivityTracker {
 	/** Tool calls are the most informative boundary, so they summarize immediately. */
 	toolStart(toolCallId: string, name: string, args?: Record<string, unknown>): void {
 		this.lastTool = { name, args };
-		this.progress = undefined;
 		this.toolSince = Date.now();
 		this.startBeat();
 		this.tools = [...this.tools, `${name}(${clip(JSON.stringify(args ?? {}), 160)})`].slice(-4);
@@ -176,16 +161,7 @@ export class ActivityTracker {
 		void this.flush();
 	}
 
-	/** Streaming progress of the running tool (subagent activity, command output). Debounced like text. */
-	toolUpdate(partial: unknown): void {
-		const next = progressOf(partial);
-		if (!next || next === this.progress) return;
-		this.progress = next;
-		this.schedule();
-	}
-
 	toolEnd(): void {
-		this.progress = undefined;
 		this.toolSince = undefined;
 		this.schedule();
 	}
@@ -208,7 +184,6 @@ export class ActivityTracker {
 		if (this.beat) clearInterval(this.beat);
 		this.beat = undefined;
 		this.toolSince = undefined;
-		this.progress = undefined;
 		this.inflight?.abort();
 		this.inflight = undefined;
 		this.seq++;
@@ -246,7 +221,7 @@ export class ActivityTracker {
 		if (seq !== this.seq) return; // a newer flush or stop() superseded this one
 		this.inflight = undefined;
 		const source = text ? "model" : "fallback";
-		const line = text ?? (this.progress && this.lastTool ? clip(`${fallbackLine(this.lastTool).replace(/…$/, "")}: ${this.progress}`, 80) : fallbackLine(this.lastTool));
+		const line = text ?? fallbackLine(this.lastTool);
 		if (line.toUpperCase() === "SAME" || (text && similarLine(this.last, line))) return; // keep ids for the next line
 		if (line === this.last) return;
 		this.last = line;
@@ -269,7 +244,6 @@ export class ActivityTracker {
 			"<context>",
 			this.userPrompt ? `User asked: ${clip(this.userPrompt, 300)}` : "",
 			this.tools.length ? `Recent tool calls (latest last): ${this.tools.join("; ")}` : "",
-			this.progress ? `Running tool progress (e.g. what a subagent is doing now): ${this.progress}` : "",
 			this.text.trim() ? `Assistant text tail: ${clip(this.text, 600)}` : "",
 			this.thinking.trim() ? `Thinking tail: ${clip(this.thinking, 300)}` : "",
 			"</context>",
