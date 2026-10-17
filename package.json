@@ -1,0 +1,40 @@
+{
+  "name": "pi-summarize",
+  "version": "0.1.0",
+  "description": "Pi extension: live one-line activity summaries and auto-titled sessions, using a cheap side model.",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "summary",
+    "session-title"
+  ],
+  "license": "UNLICENSED",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bry-guy/pi-summarize.git"
+  },
+  "homepage": "https://github.com/bry-guy/pi-summarize#readme",
+  "bugs": {
+    "url": "https://github.com/bry-guy/pi-summarize/issues"
+  },
+  "files": [
+    "extensions",
+    "src",
+    "README.md"
+  ],
+  "pi": {
+    "extensions": [
+      "./extensions/index.ts"
+    ]
+  },
+  "scripts": {
+    "test": "node --test test/*.test.ts"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "engines": {
+    "node": ">=22.18"
+  }
+}
