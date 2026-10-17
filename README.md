@@ -22,7 +22,13 @@ Subagent children get their own bus unless the host passes one to their resource
 
 ## Install
 
-From git (once pushed):
+From npm:
+
+```sh
+pi install npm:pi-summarize
+```
+
+From git:
 
 ```sh
 pi install git:github.com/bry-guy/pi-summarize
@@ -73,6 +79,7 @@ grep '"customType":"pi-summarize"' /tmp/ps-sessions/*.jsonl
 
 ```sh
 npm test   # node --test on test/*.test.ts (Node ≥ 22.18, native TS type stripping)
+mise run release   # tests, refuses an already-published version, then npm publish
 ```
 
 - `src/core.ts`: config, fallback lines, debounced `ActivityTracker`, auto-title rules. No pi imports.

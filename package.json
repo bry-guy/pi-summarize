@@ -8,7 +8,7 @@
     "summary",
     "session-title"
   ],
-  "license": "UNLICENSED",
+  "license": "MIT",
   "type": "module",
   "repository": {
     "type": "git",
@@ -21,7 +21,8 @@
   "files": [
     "extensions",
     "src",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "pi": {
     "extensions": [

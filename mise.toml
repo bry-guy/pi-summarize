@@ -1,0 +1,11 @@
+[tasks.test]
+run = "npm test"
+
+[tasks.release]
+description = "Test and publish the current package version to npm"
+depends = ["test"]
+raw = true
+run = [
+  "node scripts/check-release-version.js",
+  "npm publish --access public",
+]
