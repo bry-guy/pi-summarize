@@ -192,6 +192,7 @@ export class ActivityTracker {
 		if (this.beat) clearInterval(this.beat);
 		this.beat = undefined;
 		this.toolSince = undefined;
+		if (this.toolCallIds.length) void this.recordLate();
 		this.inflight?.abort();
 		this.inflight = undefined;
 		this.seq++;
@@ -237,6 +238,26 @@ export class ActivityTracker {
 		this.toolCallIds = [];
 		this.opts.show(line);
 		this.opts.record({ text: line, at: Date.now(), turn: this.turn, source, toolCallIds: ids, thinking: this.thinking.trim() || undefined, tools: [...this.tools] });
+	}
+
+	/** Short runs end before their line is recorded; record it anyway so hidden tool rows still leave a summary. */
+	private async recordLate(): Promise<void> {
+		const ids = [...this.toolCallIds];
+		const [prompt, last, tool, turn] = [this.prompt(), this.last, this.lastTool, this.turn];
+		const [thinking, tools] = [this.thinking.trim() || undefined, [...this.tools]];
+		this.toolCallIds = [];
+		let text: string | undefined;
+		try {
+			text = cleanLine(await this.opts.complete(prompt, AbortSignal.timeout(this.opts.timeoutMs ?? 10_000)));
+		} catch {
+			text = undefined;
+		}
+		const line = text?.toUpperCase() === "SAME" ? last : text;
+		try {
+			this.opts.record({ text: line ?? fallbackLine(tool), at: Date.now(), turn, source: line ? "model" : "fallback", toolCallIds: ids, thinking, tools });
+		} catch {
+			// session may already be gone (shutdown)
+		}
 	}
 
 	private prompt(): string {

@@ -152,6 +152,18 @@ describe("ActivityTracker", () => {
 		assert.deepEqual(shown, [undefined]);
 	});
 
+	it("stop() still records a line for tools no line covered yet, without showing it", async () => {
+		const d = deferred();
+		const { tracker, shown, records } = harness(d.complete);
+		tracker.toolStart("t1", "bash", { command: "ls" });
+		tracker.stop();
+		d.calls[1].resolve("Listing the workspace");
+		await flush();
+		assert.deepEqual(shown, [undefined]);
+		assert.equal(records[0].text, "Listing the workspace");
+		assert.deepEqual(records[0].toolCallIds, ["t1"]);
+	});
+
 	it("does not re-show an identical line", async () => {
 		const d = deferred();
 		const { tracker, shown } = harness(d.complete);
