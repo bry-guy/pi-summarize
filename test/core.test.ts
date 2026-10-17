@@ -164,6 +164,21 @@ describe("ActivityTracker", () => {
 		assert.deepEqual(records[0].toolCallIds, ["t1"]);
 	});
 
+	it("records one breadcrumb per goal, even across runs", async () => {
+		const d = deferred();
+		const { tracker, records } = harness(d.complete);
+		tracker.toolStart("t1", "bash", {});
+		d.calls[0].resolve("Checking how pi-worktree-include gets published to npm");
+		await flush();
+		tracker.stop();
+		tracker.begin("next");
+		tracker.toolStart("t2", "bash", {});
+		assert.match(d.calls.at(-1)!.prompt, /Breadcrumbs so far.*gets published to npm/);
+		d.calls.at(-1)!.resolve("Checking how pi-worktree-include got published to npm");
+		await flush();
+		assert.equal(records.length, 1);
+	});
+
 	it("does not re-show an identical line", async () => {
 		const d = deferred();
 		const { tracker, shown } = harness(d.complete);

@@ -124,6 +124,8 @@ export class ActivityTracker {
 	private inflight?: AbortController;
 	private seq = 0;
 	private last?: string;
+	/** Recently recorded breadcrumbs; survives across runs so a new run does not repeat the last goal. */
+	private recent: string[] = [];
 	private stale = false;
 	private toolSince?: number;
 	private beat?: ReturnType<typeof setInterval>;
@@ -232,12 +234,25 @@ export class ActivityTracker {
 		this.inflight = undefined;
 		const source = text ? "model" : "fallback";
 		const line = text ?? fallbackLine(this.lastTool);
-		if (line.toUpperCase() === "SAME" || (text && similarLine(this.last, line))) return; // keep ids for the next line
-		if (line === this.last) return;
+		if (line.toUpperCase() === "SAME") {
+			if (!this.last && this.recent.length) this.opts.show((this.last = this.recent[this.recent.length - 1])); // new run, same goal
+			return; // keep ids for the next line
+		}
+		if ((text && similarLine(this.last, line)) || line === this.last) return;
 		this.last = line;
-		this.toolCallIds = [];
 		this.opts.show(line);
+		if (this.isRepeat(line)) return; // the live line may reword; the transcript keeps one breadcrumb per goal
+		this.toolCallIds = [];
+		this.remember(line);
 		this.opts.record({ text: line, at: Date.now(), turn: this.turn, source, toolCallIds: ids, thinking: this.thinking.trim() || undefined, tools: [...this.tools] });
+	}
+
+	private isRepeat(line: string): boolean {
+		return this.recent.some((r) => r === line || similarLine(r, line));
+	}
+
+	private remember(line: string): void {
+		this.recent = [...this.recent, line].slice(-3);
 	}
 
 	/** Short runs end before their line is recorded; record it anyway so hidden tool rows still leave a summary. */
@@ -252,9 +267,12 @@ export class ActivityTracker {
 		} catch {
 			text = undefined;
 		}
-		if (text?.toUpperCase() === "SAME" && last) return; // the previous line already covers these tools
+		if (text?.toUpperCase() === "SAME" && (last || this.recent.length)) return; // an earlier breadcrumb covers these tools
+		const line = text ?? fallbackLine(tool);
+		if (this.isRepeat(line)) return;
+		this.remember(line);
 		try {
-			this.opts.record({ text: text ?? fallbackLine(tool), at: Date.now(), turn, source: text ? "model" : "fallback", toolCallIds: ids, thinking, tools });
+			this.opts.record({ text: line, at: Date.now(), turn, source: text ? "model" : "fallback", toolCallIds: ids, thinking, tools });
 		} catch {
 			// session may already be gone (shutdown)
 		}
@@ -269,7 +287,9 @@ export class ActivityTracker {
 			"Bad: \"Running git status\", \"Running bash\", \"Reading core.ts\".",
 			"Reply with ONE line, at most 12 words, present-progressive.",
 			"No quotes, no preamble, no trailing period. Output only the line.",
-			this.last ? `Current line: ${this.last}\nIf it still describes the work, reply exactly SAME.` : "",
+			this.recent.length ? `Breadcrumbs so far (latest last): ${this.recent.join(" | ")}` : "",
+			this.last ? `Current line: ${this.last}` : "",
+			this.recent.length || this.last ? "Reply exactly SAME unless the goal clearly changed from these. Rewording the same goal is SAME." : "",
 			"",
 			"<context>",
 			this.userPrompt ? `User asked: ${clip(this.userPrompt, 300)}` : "",
