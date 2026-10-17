@@ -4,7 +4,7 @@ A [pi](https://github.com/earendil-works/pi) extension package with two features
 
 1. **Live activity line.** While the agent works, the working indicator shows one short, specific present-progressive line (≤ 12 words) describing the goal rather than the command, e.g. `Checking why the sync test fails`. Tool calls summarize immediately; text and thinking summarize at most every ~2 s. Subagents run their own copy of the extension and narrate themselves; the parent does not relay their progress. While a tool runs, the line shows elapsed time every 5 s (display only, not recorded), so long waits visibly move. Calls are cancelled when superseded or when the run ends, and failures or timeouts (10 s) fall back to a deterministic line such as `Reading files.js…` or `Working…`.
 
-   In the transcript, tool rows are hidden and each recorded line shows as `◆ <summary>`. Ctrl+O (expand) brings back the tool rows and shows each summary's thinking tail and tool calls. With `activity` off, tools render normally.
+   In the transcript, tool rows and summary lines are hidden; only the live working line narrates. Ctrl+O (expand) shows the tool rows plus each recorded `◆ <summary>` with its thinking tail and tool calls. With `activity` off, tools render normally.
 2. **Auto-title.** After the first assistant reply in a session with no name, it sets a 2–4 word session name. It never overwrites a name you set, and it does not retry once it has named the session.
 
 Each shown line and each generated title is persisted with `pi.appendEntry("pi-summarize", …)`. These custom entries are not sent to the LLM. Hosts can read them from the session JSONL.

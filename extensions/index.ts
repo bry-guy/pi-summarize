@@ -157,14 +157,14 @@ type Renderers = NonNullable<ReturnType<Parameters<ExtensionAPI["registerToolRen
 type Data = { kind?: string; text?: string; source?: string; thinking?: string; tools?: string[] };
 
 /**
- * Collapsed (default): tool rows render nothing, so the summary lines stand in for them.
+ * Collapsed (default): tool rows and summary lines render nothing; the live working line narrates.
  * Expanded (Ctrl+O): tools render normally, and summaries show what they summarized.
  */
 function registerRenderers(pi: ExtensionAPI, enabled: () => boolean) {
 	pi.registerEntryRenderer<Data>("pi-summarize", (entry, { expanded }, theme) => {
 		const d = entry.data;
 		if (d?.kind !== "activity" || !d.text || !enabled()) return new Container();
-		if (d.source === "fallback" && !expanded) return new Container(); // generic lines add nothing at a glance
+		if (!expanded) return new Container(); // collapsed: the live working line is the only narration
 		const box = new Box(1, 0);
 		box.addChild(new Text(`${theme.fg("accent", "◆")} ${theme.fg("muted", d.text)}`, 0, 0));
 		if (expanded) {
