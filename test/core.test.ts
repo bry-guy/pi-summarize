@@ -47,10 +47,17 @@ describe("resolveConfig", () => {
 	});
 });
 
+describe("cleanLine trailing dots", () => {
+	it("strips trailing dots", () => {
+		assert.equal(cleanLine("Reading files..."), "Reading files");
+	});
+});
+
 describe("fallbackLine", () => {
 	it("describes the tool in present-progressive form", () => {
 		assert.equal(fallbackLine({ name: "read", args: { path: "/src/lib/files.js" } }), "Reading files.js…");
-		assert.equal(fallbackLine({ name: "bash", args: { command: "npm test" } }), "Running npm test…");
+		assert.equal(fallbackLine({ name: "bash", args: { command: "npm test" } }), "Working…");
+		assert.equal(fallbackLine({ name: "grep", args: { pattern: "a very long search pattern for things" } }), "Searching a very long search pattern…");
 		assert.equal(fallbackLine({ name: "edit", args: { file_path: "a/b.ts" } }), "Editing b.ts…");
 		assert.equal(fallbackLine({ name: "grep", args: { pattern: "TODO" } }), "Searching TODO…");
 		assert.equal(fallbackLine({ name: "custom_thing" }), "Running custom_thing…");
@@ -91,7 +98,7 @@ describe("ActivityTracker", () => {
 		tracker.toolStart("t1", "bash", { command: "npm test" });
 		d.calls[0].reject(new Error("boom"));
 		await flush();
-		assert.deepEqual(shown, ["Running npm test…"]);
+		assert.deepEqual(shown, ["Working…"]);
 		assert.equal(records[0].source, "fallback");
 	});
 

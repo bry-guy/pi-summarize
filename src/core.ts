@@ -38,7 +38,10 @@ export interface ToolActivity {
 const str = (value: unknown): string | undefined => (typeof value === "string" && value.trim() ? value : undefined);
 const clip = (text: string, max: number): string => {
 	const flat = text.replace(/\s+/g, " ").trim();
-	return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
+	if (flat.length <= max) return flat;
+	const cut = flat.slice(0, max - 1);
+	const space = cut.lastIndexOf(" ");
+	return `${(space > max / 2 ? cut.slice(0, space) : cut).replace(/[\s.,;:\u2026]+$/, "")}\u2026`;
 };
 const baseName = (path: string): string => path.split("/").filter(Boolean).pop() ?? path;
 
@@ -48,12 +51,12 @@ export function fallbackLine(tool?: ToolActivity): string {
 	const args = tool.args ?? {};
 	const path = str(args.path) ?? str(args.file_path) ?? str(args.file);
 	const name = tool.name.toLowerCase();
-	if (name === "bash") return `Running ${clip(str(args.command) ?? "command", 40)}…`;
+	if (name === "bash") return "Working…"; // the command itself is noise; the model supplies the goal
 	if (name === "read" && path) return `Reading ${baseName(path)}…`;
 	if (name === "edit" && path) return `Editing ${baseName(path)}…`;
 	if (name === "write" && path) return `Writing ${baseName(path)}…`;
-	if (["grep", "find", "glob"].includes(name)) return `Searching ${clip(str(args.pattern) ?? path ?? "files", 30)}…`;
-	if (name === "ls") return `Listing ${clip(path ?? "files", 30)}…`;
+	if (["grep", "find", "glob"].includes(name)) return `Searching ${clip(str(args.pattern) ?? path ?? "files", 30).replace(/…$/, "")}…`;
+	if (name === "ls") return `Listing ${clip(path ?? "files", 30).replace(/…$/, "")}…`;
 	return `Running ${tool.name}…`;
 }
 
@@ -71,14 +74,14 @@ export function similarLine(a: string | undefined, b: string): boolean {
 	return shared / Math.min(x.size, y.size) >= 0.75;
 }
 
-/** Accept one short line; reject anything over 8 words so the fallback is used instead. */
+/** Accept one short line; reject anything over 12 words so the fallback is used instead. */
 export function cleanLine(raw: string): string | undefined {
 	const line = raw
 		.split("\n")
 		.map((s) => s.trim())
 		.find(Boolean)
 		?.replace(/^["'`*#>\-\s]+|["'`*\s]+$/g, "")
-		.replace(/\.$/, "");
+		.replace(/\.+$/, "");
 	if (!line || line.split(/\s+/).length > 12) return undefined;
 	if (/^same$/i.test(line)) return "SAME";
 	return clip(line, 80);
@@ -118,6 +121,7 @@ export class ActivityTracker {
 	private inflight?: AbortController;
 	private seq = 0;
 	private last?: string;
+	private stale = false;
 	private toolSince?: number;
 	private beat?: ReturnType<typeof setInterval>;
 
@@ -155,6 +159,7 @@ export class ActivityTracker {
 	toolStart(toolCallId: string, name: string, args?: Record<string, unknown>): void {
 		this.lastTool = { name, args };
 		this.toolSince = Date.now();
+		this.stale = true; // no heartbeat until this tool's line is decided
 		this.startBeat();
 		this.tools = [...this.tools, `${name}(${clip(JSON.stringify(args ?? {}), 160)})`].slice(-4);
 		this.toolCallIds.push(toolCallId);
@@ -171,7 +176,7 @@ export class ActivityTracker {
 		const every = this.opts.heartbeatMs ?? 5000;
 		if (!every || this.beat) return;
 		this.beat = setInterval(() => {
-			if (!this.toolSince || !this.last) return;
+			if (!this.toolSince || !this.last || this.stale) return;
 			const secs = Math.round((Date.now() - this.toolSince) / 1000);
 			if (secs >= 5) this.opts.show(`${this.last} · ${secs}s`);
 		}, every);
@@ -219,6 +224,7 @@ export class ActivityTracker {
 			clearTimeout(timeout);
 		}
 		if (seq !== this.seq) return; // a newer flush or stop() superseded this one
+		this.stale = false;
 		this.inflight = undefined;
 		const source = text ? "model" : "fallback";
 		const line = text ?? fallbackLine(this.lastTool);
