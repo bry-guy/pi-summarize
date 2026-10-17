@@ -18,6 +18,9 @@ const textOf = (content: unknown): string =>
 					.join("\n")
 			: "";
 
+/** Bus channel for each shown activity line. Hosts such as subagent runners listen here. */
+const ACTIVITY_CHANNEL = "pi-summarize:activity";
+
 const agentDir = process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent");
 
 function loadSettings(): unknown {
@@ -64,10 +67,14 @@ export default function (pi: ExtensionAPI) {
 		live = ctx;
 		cfg = resolveConfig(loadSettings(), process.env);
 		tracker?.stop();
+		const sessionId = ctx.sessionManager.getSessionId();
 		tracker = new ActivityTracker({
 			complete: (prompt, signal) => complete(live!, cfg, prompt, signal, 60),
 			show: (text) => live?.ui.setWorkingMessage(text),
-			record: (entry) => pi.appendEntry("pi-summarize", { kind: "activity", ...entry }),
+			record: (entry) => {
+				pi.appendEntry("pi-summarize", { kind: "activity", ...entry });
+				pi.events.emit(ACTIVITY_CHANNEL, { sessionId, ...entry });
+			},
 		});
 		if (cfg.model && !resolveModel(ctx, cfg.model) && ctx.hasUI) {
 			ctx.ui.notify(`pi-summarize: model "${cfg.model}" not found; using fallback lines`, "warning");

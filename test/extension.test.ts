@@ -21,6 +21,7 @@ describe("extension wiring", () => {
 	let names: string[];
 	let streamCalls: { provider: string; id: string; reasoning?: string; prompt: string }[];
 	let working: (string | undefined)[];
+	let emitted: { channel: string; data: any }[];
 	let sessionName: string | undefined;
 	let ctx: any;
 
@@ -30,6 +31,7 @@ describe("extension wiring", () => {
 		const pi = {
 			on: (name: string, fn: any) => (handlers[name] = fn),
 			appendEntry: (type: string, data: any) => appended.push({ type, data }),
+			events: { emit: (channel: string, data: any) => emitted.push({ channel, data }) },
 			setSessionName: (n: string) => {
 				sessionName = n;
 				names.push(n);
@@ -44,12 +46,13 @@ describe("extension wiring", () => {
 		names = [];
 		streamCalls = [];
 		working = [];
+		emitted = [];
 		sessionName = name;
 		ctx = {
 			hasUI: true,
 			model: { provider: "openai", id: "gpt-session" },
 			ui: { setWorkingMessage: (m?: string) => working.push(m), notify: () => {} },
-			sessionManager: { getBranch: () => [] },
+			sessionManager: { getBranch: () => [], getSessionId: () => "child-session" },
 			modelRegistry: {
 				find: (provider: string, id: string) => ({ provider, id }),
 				hasConfiguredAuth: () => true,
@@ -84,6 +87,10 @@ describe("extension wiring", () => {
 		const activity = appended.find((e) => e.data.kind === "activity");
 		assert.equal(activity?.type, "pi-summarize");
 		assert.deepEqual(activity?.data.toolCallIds, ["t1"]);
+		const shown = emitted.find((e) => e.channel === "pi-summarize:activity");
+		assert.equal(shown?.data.sessionId, "child-session");
+		assert.equal(shown?.data.text, "Checking the sync adapter…");
+		assert.deepEqual(shown?.data.toolCallIds, ["t1"]);
 
 		await handlers.agent_end({ type: "agent_end", messages: [] }, ctx);
 		ctx.sessionManager.getBranch = () => [

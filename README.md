@@ -12,6 +12,12 @@ Each shown line and each generated title is persisted with `pi.appendEntry("pi-s
 // {"type":"custom","customType":"pi-summarize","data":{"kind":"title","text":"Fix Sync Adapter","auto":true,"at":1760000000000}}
 ```
 
+## Host integration
+
+Each shown activity line is also emitted on the extension bus as `pi.events` channel `pi-summarize:activity`, with payload `{ sessionId, text, at, turn, source, toolCallIds }`. `sessionId` is the session that produced the line, so a host running several sessions can route by it.
+
+Subagent children get their own bus unless the host passes one to their resource loader, so emits from a child do not reach the parent by default. Persisted history needs no bus: a child's session JSONL (the subagent `outputFile`) already contains its `pi-summarize` activity entries.
+
 ## Install
 
 From git (once pushed):
