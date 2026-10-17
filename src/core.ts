@@ -54,6 +54,9 @@ export function fallbackLine(tool?: ToolActivity): string {
 	if (name === "write" && path) return `Writing ${baseName(path)}…`;
 	if (["grep", "find", "glob"].includes(name)) return `Searching ${clip(str(args.pattern) ?? path ?? "files", 30)}…`;
 	if (name === "ls") return `Listing ${clip(path ?? "files", 30)}…`;
+	const task = str(args.description) ?? str(args.prompt);
+	if (name === "agent" || name === "subagent") return `Subagent: ${clip(task ?? "working", 40)}…`;
+	if (name.includes("subagent") || name.includes("result")) return `Waiting on ${clip(task ?? "a subagent", 40)}…`;
 	return `Running ${tool.name}…`;
 }
 
@@ -79,7 +82,7 @@ export function cleanLine(raw: string): string | undefined {
 		.find(Boolean)
 		?.replace(/^["'`*#>\-\s]+|["'`*\s]+$/g, "")
 		.replace(/\.$/, "");
-	if (!line || line.split(/\s+/).length > 8) return undefined;
+	if (!line || line.split(/\s+/).length > 12) return undefined;
 	if (/^same$/i.test(line)) return "SAME";
 	return clip(line, 80);
 }
@@ -102,6 +105,18 @@ export interface TrackerOptions {
 	record(entry: ActivityRecord): void;
 	debounceMs?: number;
 	timeoutMs?: number;
+	/** While a tool runs with no new line, re-show the line with elapsed time this often. 0 disables. */
+	heartbeatMs?: number;
+}
+
+/** Progress text from a tool's partial result: pi-subagents' details.activity/toolUses, else the output tail. */
+export function progressOf(partial: unknown): string | undefined {
+	const p = partial as { details?: { activity?: unknown; toolUses?: unknown }; content?: { type?: string; text?: string }[] } | undefined;
+	const activity = str(p?.details?.activity);
+	const uses = typeof p?.details?.toolUses === "number" ? p.details.toolUses : undefined;
+	if (activity || uses !== undefined) return [activity && clip(activity, 120), uses !== undefined ? `${uses} tool uses` : ""].filter(Boolean).join(" · ");
+	const text = p?.content?.filter((c) => c.type === "text").map((c) => c.text ?? "").join("\n");
+	return text?.trim() ? clip(tail(text, 200), 200) : undefined;
 }
 
 export class ActivityTracker {
@@ -116,6 +131,9 @@ export class ActivityTracker {
 	private inflight?: AbortController;
 	private seq = 0;
 	private last?: string;
+	private progress?: string;
+	private toolSince?: number;
+	private beat?: ReturnType<typeof setInterval>;
 
 	private readonly opts: TrackerOptions;
 
@@ -150,18 +168,47 @@ export class ActivityTracker {
 	/** Tool calls are the most informative boundary, so they summarize immediately. */
 	toolStart(toolCallId: string, name: string, args?: Record<string, unknown>): void {
 		this.lastTool = { name, args };
+		this.progress = undefined;
+		this.toolSince = Date.now();
+		this.startBeat();
 		this.tools = [...this.tools, fallbackLine(this.lastTool).replace(/…$/, "")].slice(-4);
 		this.toolCallIds.push(toolCallId);
 		void this.flush();
 	}
 
-	toolEnd(): void {
+	/** Streaming progress of the running tool (subagent activity, command output). Debounced like text. */
+	toolUpdate(partial: unknown): void {
+		const next = progressOf(partial);
+		if (!next || next === this.progress) return;
+		this.progress = next;
 		this.schedule();
+	}
+
+	toolEnd(): void {
+		this.progress = undefined;
+		this.toolSince = undefined;
+		this.schedule();
+	}
+
+	/** Keeps the line visibly alive during long tools: same text plus elapsed seconds, display only. */
+	private startBeat(): void {
+		const every = this.opts.heartbeatMs ?? 5000;
+		if (!every || this.beat) return;
+		this.beat = setInterval(() => {
+			if (!this.toolSince || !this.last) return;
+			const secs = Math.round((Date.now() - this.toolSince) / 1000);
+			if (secs >= 5) this.opts.show(`${this.last} · ${secs}s`);
+		}, every);
+		(this.beat as { unref?: () => void }).unref?.();
 	}
 
 	/** Agent run ended: drop pending work, cancel in-flight calls, restore the default line. */
 	stop(): void {
 		this.clearTimer();
+		if (this.beat) clearInterval(this.beat);
+		this.beat = undefined;
+		this.toolSince = undefined;
+		this.progress = undefined;
 		this.inflight?.abort();
 		this.inflight = undefined;
 		this.seq++;
@@ -199,8 +246,8 @@ export class ActivityTracker {
 		if (seq !== this.seq) return; // a newer flush or stop() superseded this one
 		this.inflight = undefined;
 		const source = text ? "model" : "fallback";
-		const line = text ?? fallbackLine(this.lastTool);
-		if (line.toUpperCase() === "SAME" || similarLine(this.last, line)) return; // keep ids for the next line
+		const line = text ?? (this.progress && this.lastTool ? clip(`${fallbackLine(this.lastTool).replace(/…$/, "")}: ${this.progress}`, 80) : fallbackLine(this.lastTool));
+		if (line.toUpperCase() === "SAME" || (text && similarLine(this.last, line))) return; // keep ids for the next line
 		if (line === this.last) return;
 		this.last = line;
 		this.toolCallIds = [];
@@ -211,13 +258,14 @@ export class ActivityTracker {
 	private prompt(): string {
 		return [
 			"You narrate what a coding agent is doing right now.",
-			"Reply with ONE line, at most 8 words, present-progressive, e.g. \"Checking the sync adapter…\".",
+			"Reply with ONE line, at most 12 words, present-progressive. Be specific: name the file, command, or subagent task, e.g. \"Reading real.js to find the busy-line handler\".",
 			"No quotes, no preamble, no trailing period. Output only the line.",
 			this.last ? `Current line: ${this.last}\nIf it still describes the work, reply exactly SAME.` : "",
 			"",
 			"<context>",
 			this.userPrompt ? `User asked: ${clip(this.userPrompt, 300)}` : "",
 			this.tools.length ? `Recent tools: ${this.tools.join("; ")}` : "",
+			this.progress ? `Running tool progress (e.g. what a subagent is doing now): ${this.progress}` : "",
 			this.text.trim() ? `Assistant text tail: ${clip(this.text, 600)}` : "",
 			this.thinking.trim() ? `Thinking tail: ${clip(this.thinking, 300)}` : "",
 			"</context>",

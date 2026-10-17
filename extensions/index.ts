@@ -97,6 +97,11 @@ export default function (pi: ExtensionAPI) {
 		if (cfg.activity) tracker?.toolStart(event.toolCallId, event.toolName, event.args);
 	});
 
+	pi.on("tool_execution_update", async (event, ctx) => {
+		live = ctx;
+		if (cfg.activity) tracker?.toolUpdate(event.partialResult);
+	});
+
 	pi.on("tool_execution_end", async (_event, ctx) => {
 		live = ctx;
 		if (cfg.activity) tracker?.toolEnd();
