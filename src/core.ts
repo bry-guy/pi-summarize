@@ -95,6 +95,9 @@ export interface ActivityRecord {
 	turn: number;
 	source: "model" | "fallback";
 	toolCallIds: string[];
+	/** What the line summarized, for the expanded transcript view. */
+	thinking?: string;
+	tools?: string[];
 }
 
 export interface TrackerOptions {
@@ -233,7 +236,7 @@ export class ActivityTracker {
 		this.last = line;
 		this.toolCallIds = [];
 		this.opts.show(line);
-		this.opts.record({ text: line, at: Date.now(), turn: this.turn, source, toolCallIds: ids });
+		this.opts.record({ text: line, at: Date.now(), turn: this.turn, source, toolCallIds: ids, thinking: this.thinking.trim() || undefined, tools: [...this.tools] });
 	}
 
 	private prompt(): string {

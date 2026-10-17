@@ -30,6 +30,8 @@ describe("extension wiring", () => {
 		handlers = {};
 		const pi = {
 			on: (name: string, fn: any) => (handlers[name] = fn),
+			registerEntryRenderer: () => {},
+			registerToolRenderer: () => {},
 			appendEntry: (type: string, data: any) => appended.push({ type, data }),
 			events: { emit: (channel: string, data: any) => emitted.push({ channel, data }) },
 			setSessionName: (n: string) => {

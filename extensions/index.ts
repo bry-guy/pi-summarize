@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { Box, Container, Text } from "@earendil-works/pi-tui";
 import { ActivityTracker, autoTitle, resolveConfig, type SummarizeConfig } from "../src/core.ts";
 
 type Ctx = ExtensionContext;
@@ -58,6 +59,7 @@ async function complete(ctx: Ctx, cfg: SummarizeConfig, prompt: string, signal: 
 }
 
 export default function (pi: ExtensionAPI) {
+	registerRenderers(pi, () => cfg.activity);
 	let live: Ctx | undefined; // latest context; the one captured at session_start can go stale
 	let cfg: SummarizeConfig = resolveConfig({}, {});
 	let tracker: ActivityTracker | undefined;
@@ -148,5 +150,61 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("session_shutdown", async () => {
 		tracker?.stop();
+	});
+}
+
+type Renderers = NonNullable<ReturnType<Parameters<ExtensionAPI["registerToolRenderer"]>[0]>>;
+type Data = { kind?: string; text?: string; thinking?: string; tools?: string[] };
+
+/**
+ * Collapsed (default): tool rows render nothing, so the summary lines stand in for them.
+ * Expanded (Ctrl+O): tools render normally, and summaries show what they summarized.
+ */
+function registerRenderers(pi: ExtensionAPI, enabled: () => boolean) {
+	pi.registerEntryRenderer<Data>("pi-summarize", (entry, { expanded }, theme) => {
+		const d = entry.data;
+		if (d?.kind !== "activity" || !d.text || !enabled()) return new Container();
+		const box = new Box(1, 0);
+		box.addChild(new Text(`${theme.fg("accent", "◆")} ${theme.fg("muted", d.text)}`, 0, 0));
+		if (expanded) {
+			if (d.thinking) box.addChild(new Text(theme.fg("dim", `  thinking: ${d.thinking.replace(/\s+/g, " ")}`), 0, 0));
+			for (const t of d.tools ?? []) box.addChild(new Text(theme.fg("dim", `  ${t}`), 0, 0));
+		}
+		return box;
+	});
+
+	pi.registerToolRenderer((toolName, next): Renderers | undefined => {
+		const inner = next();
+		if (!enabled()) return inner;
+		// renderShell "self" lets an empty render collapse the row to zero lines; we draw the default shell ourselves when expanded.
+		type State = { box?: Box; call?: unknown; result?: unknown };
+		const fill = (state: State, ctx: { isPartial: boolean; isError: boolean }, theme: Parameters<NonNullable<Renderers["renderCall"]>>[1]) => {
+			const bg = ctx.isPartial ? "toolPendingBg" : ctx.isError ? "toolErrorBg" : "toolSuccessBg";
+			const box = (state.box ??= new Box(1, 1));
+			box.setBgFn((t: string) => theme.bg(bg, t));
+			box.clear();
+			for (const c of [state.call, state.result]) if (c) box.addChild(c as Text);
+			return box;
+		};
+		return {
+			renderShell: "self",
+			renderCall(args, theme, ctx) {
+				if (!ctx.expanded) return new Container();
+				if (inner?.renderShell === "self") return inner.renderCall?.(args, theme, ctx) ?? new Container();
+				const state = ctx.state as State;
+				state.call = inner?.renderCall?.(args, theme, { ...ctx, lastComponent: state.call as never }) ?? new Text(theme.fg("toolTitle", theme.bold(toolName)), 0, 0);
+				return fill(state, ctx, theme);
+			},
+			renderResult(result, opts, theme, ctx) {
+				if (!ctx.expanded) return new Container();
+				if (inner?.renderShell === "self") return inner.renderResult?.(result, opts, theme, ctx) ?? new Container();
+				const state = ctx.state as State;
+				const text = (result.content as Content[] | undefined)?.filter((c) => c.type === "text").map((c) => c.text).join("\n");
+				state.result = inner?.renderResult?.(result, opts, theme, { ...ctx, lastComponent: state.result as never }) ?? (text ? new Text(theme.fg("toolOutput", text), 0, 0) : undefined);
+				fill(state, ctx, theme);
+				ctx.invalidate();
+				return new Container();
+			},
+		};
 	});
 }
