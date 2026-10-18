@@ -12,7 +12,7 @@ function deferred() {
 	return { calls, complete };
 }
 
-function harness(complete: (p: string, s: AbortSignal) => Promise<string>, extra: { debounceMs?: number; stepWaitMs?: number } = {}) {
+function harness(complete: (p: string, s: AbortSignal) => Promise<string>, extra: { debounceMs?: number; stepWaitMs?: number; firstDebounceMs?: number } = {}) {
 	const shown: (string | undefined)[] = [];
 	const records: { text: string; source: string; toolCallIds: string[] }[] = [];
 	const tracker = new ActivityTracker({
@@ -131,7 +131,7 @@ describe("ActivityTracker", () => {
 	it("debounces text deltas into one call", async (t) => {
 		t.mock.timers.enable({ apis: ["setTimeout"] });
 		const d = deferred();
-		const { tracker } = harness(d.complete);
+		const { tracker } = harness(d.complete, { firstDebounceMs: 2000 });
 		tracker.begin("q");
 		tracker.textDelta("a");
 		tracker.textDelta("b");
@@ -192,6 +192,35 @@ describe("ActivityTracker", () => {
 		d.calls[1].resolve("Checking the config loader");
 		await flush();
 		assert.equal(shown.at(-1), undefined);
+	});
+
+	it("records the step's model line as its breadcrumb even when the display suppressed it", async () => {
+		const d = deferred();
+		const { tracker, records, shown } = harness(d.complete, { stepWaitMs: 50 });
+		tracker.turnStart(0);
+		tracker.textDelta("Check it:");
+		tracker.toolStart("t1", "read", { path: "a.ts" });
+		d.calls[0].resolve("Checking the config loader");
+		await tracker.turnEnd();
+		tracker.turnStart(1);
+		tracker.textDelta("Now the other loader:");
+		tracker.toolStart("t2", "read", { path: "b.ts" });
+		d.calls[1].resolve("Checking the config loader");
+		await tracker.turnEnd();
+		assert.equal(shown.filter(Boolean).length, 1, "the repeat was not displayed");
+		assert.deepEqual(records.map((r) => [r.text, r.source]), [["Checking the config loader", "model"]], "identical line merges, never a fallback");
+	});
+
+	it("a step's first summary fires sooner than later ones", async (t) => {
+		t.mock.timers.enable({ apis: ["setTimeout"] });
+		const d = deferred();
+		const { tracker } = harness(d.complete, { firstDebounceMs: 800, debounceMs: 2000 });
+		tracker.turnStart(0);
+		tracker.thinkingDelta("hmm");
+		t.mock.timers.tick(799);
+		assert.equal(d.calls.length, 0);
+		t.mock.timers.tick(1);
+		assert.equal(d.calls.length, 1);
 	});
 
 	it("turnEnd does not wait forever for a slow live line", async () => {

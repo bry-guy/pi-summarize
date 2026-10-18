@@ -1,3 +1,4 @@
+import { appendFileSync } from "node:fs";
 // Pure logic for pi-summarize: config, fallback lines, debounced activity tracker, auto-title rules.
 // No pi runtime imports, so it runs under plain `node --test`.
 
@@ -110,9 +111,17 @@ export interface TrackerOptions {
 	timeoutMs?: number;
 	/** How long turnEnd waits for the step's live line before using the fallback. */
 	stepWaitMs?: number;
+	/** Delay before a step's first summary; later ones use debounceMs. */
+	firstDebounceMs?: number;
 	/** While a tool runs with no new line, re-show the line with elapsed time this often. 0 disables. */
 	heartbeatMs?: number;
 }
+
+// shortcut: temporary diagnostics, remove once the live line is verified.
+const dbg = (o: Record<string, unknown>) => {
+	const f = process.env.PI_SUMMARIZE_DEBUG;
+	if (f) try { appendFileSync(f, JSON.stringify({ t: Date.now(), ...o }) + "\n"); } catch {}
+};
 
 export class ActivityTracker {
 	private userPrompt?: string;
@@ -129,6 +138,9 @@ export class ActivityTracker {
 	private seq = 0;
 	private last?: string;
 	private lastTurn = -1;
+	/** The model's line for the current step, kept even when the display suppressed it. */
+	private stepLine?: string;
+	private flushedTurn = -1;
 	/** The model judged the current step a continuation of the previous breadcrumb. */
 	private continues = false;
 	private lastSource: ActivityRecord["source"] = "fallback";
@@ -202,13 +214,14 @@ export class ActivityTracker {
 			await Promise.race([this.pending, new Promise((r) => (timer = setTimeout(r, this.opts.stepWaitMs ?? 2500)))]);
 			clearTimeout(timer);
 		}
-		const fresh = this.last !== undefined && this.lastTurn === turn;
-		const line = fresh ? (this.last as string) : fallbackLine(this.lastTool);
+		const fresh = this.stepLine !== undefined && this.lastTurn === turn;
+		const line = fresh ? (this.stepLine as string) : fallbackLine(this.lastTool);
 		const source = fresh ? this.lastSource : "fallback";
 		const leadIn = step.text.trim() !== "";
 		const continues = fresh && this.continues;
 		// The breadcrumb now covers this step; the live line goes back to the plain spinner until the next step has its own summary.
 		this.last = undefined;
+		dbg({ ev: "turnEnd", turn, line, source, fresh, continues: fresh && this.continues });
 		this.opts.show(undefined);
 		if (this.crumb && (line === this.crumb || (!leadIn && (continues || source === "fallback" || similarLine(this.crumb, line))))) return;
 		this.crumb = line;
@@ -243,7 +256,9 @@ export class ActivityTracker {
 	/** Max-wait debounce: the first event in a window arms one flush, so long streams still update. */
 	private schedule(): void {
 		if (this.timer) return;
-		this.timer = setTimeout(() => this.kick(), this.opts.debounceMs ?? 2000);
+		// A step's first line comes quickly so short thinking phases still get one; later updates are throttled.
+		const first = this.flushedTurn !== this.turn;
+		this.timer = setTimeout(() => this.kick(), first ? (this.opts.firstDebounceMs ?? 800) : (this.opts.debounceMs ?? 2000));
 	}
 
 	private clearTimer(): void {
@@ -252,6 +267,7 @@ export class ActivityTracker {
 	}
 
 	private kick(): void {
+		this.flushedTurn = this.turn;
 		this.pending = this.flush();
 	}
 
@@ -271,11 +287,12 @@ export class ActivityTracker {
 		} finally {
 			clearTimeout(timeout);
 		}
+		dbg({ ev: "reply", turn: this.turn, text, superseded: seq !== this.seq, leadIn: this.step.text.length, crumb: this.crumb });
 		if (seq !== this.seq) return; // a newer flush or stop() superseded this one
 		this.stale = false;
 		this.inflight = undefined;
 		const same = text?.toUpperCase() === "SAME";
-		if (this.lastTurn !== this.turn) this.continues = false;
+		if (this.lastTurn !== this.turn) [this.continues, this.stepLine] = [false, undefined];
 		this.lastTurn = this.turn;
 		if (same) {
 			this.continues = true;
@@ -283,10 +300,12 @@ export class ActivityTracker {
 		}
 		const line = text ?? fallbackLine(this.lastTool);
 		this.lastSource = text ? "model" : "fallback";
+		if (text || this.stepLine === undefined) this.stepLine = line;
 		if (line === this.last || (text && similarLine(this.last, line))) return;
 		// Never echo the breadcrumb just left; a generic fallback is no better than the bare spinner.
 		if (line === this.crumb || (text && similarLine(this.crumb, line)) || line === "Working…") return;
 		this.last = line;
+		dbg({ ev: "show", line });
 		this.opts.show(line);
 	}
 
