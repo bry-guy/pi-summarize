@@ -129,6 +129,8 @@ export class ActivityTracker {
 	private seq = 0;
 	private last?: string;
 	private lastTurn = -1;
+	/** The model judged the current step a continuation of the previous breadcrumb. */
+	private continues = false;
 	private lastSource: ActivityRecord["source"] = "fallback";
 	/** Last recorded breadcrumb; survives across runs so a tool-only step can merge into it. */
 	private crumb?: string;
@@ -204,7 +206,8 @@ export class ActivityTracker {
 		const line = fresh ? (this.last as string) : fallbackLine(this.lastTool);
 		const source = fresh ? this.lastSource : "fallback";
 		const leadIn = step.text.trim() !== "";
-		if (this.crumb && (line === this.crumb || (!leadIn && (source === "fallback" || similarLine(this.crumb, line))))) return;
+		const continues = fresh && this.continues;
+		if (this.crumb && (line === this.crumb || (!leadIn && (continues || source === "fallback" || similarLine(this.crumb, line))))) return;
 		this.crumb = line;
 		this.opts.record({ text: line, at: Date.now(), turn, source, toolCallIds: step.ids, thinking: step.thinking.trim() || undefined, tools: step.tools });
 	}
@@ -269,7 +272,9 @@ export class ActivityTracker {
 		this.stale = false;
 		this.inflight = undefined;
 		const same = text?.toUpperCase() === "SAME";
+		if (this.lastTurn !== this.turn) this.continues = false;
 		this.lastTurn = this.turn;
+		if (same) this.continues = true;
 		if (same && this.last) return; // the current line still describes this step
 		const line = text && !same ? text : fallbackLine(this.lastTool);
 		this.lastSource = text && !same ? "model" : "fallback";
@@ -288,8 +293,10 @@ export class ActivityTracker {
 			'Bad: "Running git status", "Running bash", "Reading core.ts".',
 			"Reply with ONE line, at most 12 words, present-progressive.",
 			"No quotes, no preamble, no trailing period. Output only the line.",
-			this.crumb ? `Previous step: ${this.crumb}. Describe what is new in this step; do not repeat it.` : "",
-			this.last && !leadIn ? `Current line: ${this.last}\nIf it still describes the work, reply exactly SAME.` : "",
+			"If the agent is waiting, polling, sleeping or retrying, name the goal it is waiting on (\"Publishing the package to npm\"), never the wait itself (\"Waiting on npm login\").",
+			this.crumb && leadIn ? `Previous step: ${this.crumb}. Describe what is new in this step; do not repeat it.` : "",
+			this.crumb && !leadIn ? `Previous step: ${this.crumb}\nIf this step pursues the same goal, even reworded, reply exactly SAME.` : "",
+			!this.crumb && this.last && !leadIn ? `Current line: ${this.last}\nIf it still describes the work, reply exactly SAME.` : "",
 			"",
 			"<context>",
 			this.userPrompt ? `User asked: ${clip(this.userPrompt, 300)}` : "",

@@ -185,8 +185,9 @@ function registerRenderers(pi: ExtensionAPI, enabled: () => boolean) {
 	// TUI-only APIs; older SDK hosts (e.g. pi-web) lack them and must still load the extension.
 	pi.registerEntryRenderer?.<Data>("pi-summarize", (entry, { expanded }, theme) => {
 		const d = entry.data;
-		if (d?.kind !== "activity" || !d.text || !enabled()) return new Container();
-		if (d.source === "fallback" && !expanded) return new Container(); // generic lines add nothing at a glance
+		// undefined, not an empty component: pi adds a spacer line before every component it is given.
+		if (d?.kind !== "activity" || !d.text || !enabled()) return undefined;
+		if (d.source === "fallback" && !expanded) return undefined; // generic lines add nothing at a glance
 		const box = new Box(1, 0);
 		box.addChild(new Text(`${theme.fg("accent", "◆")} ${theme.fg("muted", d.text)}`, 0, 0));
 		if (expanded) {
