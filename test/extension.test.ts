@@ -86,7 +86,7 @@ describe("extension wiring", () => {
 		assert.equal(streamCalls[0].provider, "anthropic");
 		assert.equal(streamCalls[0].id, "claude-haiku-5-5");
 		assert.equal(streamCalls[0].reasoning, "low");
-		assert.deepEqual(working, ["Checking the sync adapter…"]);
+		assert.deepEqual(working, ["Checking the sync adapter…", undefined], "line shown, then cleared once the step leaves its breadcrumb");
 		const activity = appended.find((e) => e.data.kind === "activity");
 		assert.equal(activity?.type, "pi-summarize");
 		assert.deepEqual(activity?.data.toolCallIds, ["t1"]);

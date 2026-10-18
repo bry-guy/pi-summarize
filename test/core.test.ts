@@ -100,7 +100,7 @@ describe("ActivityTracker", () => {
 		tracker.toolStart("t1", "bash", { command: "npm test" });
 		d.calls[0].reject(new Error("boom"));
 		await flush();
-		assert.deepEqual(shown, ["Working…"]);
+		assert.deepEqual(shown, [], "a generic fallback leaves the bare spinner");
 		await tracker.turnEnd();
 		assert.equal(records[0].source, "fallback");
 	});
@@ -157,7 +157,7 @@ describe("ActivityTracker", () => {
 
 	it("records one breadcrumb per step; a tool-only step with the same goal merges", async () => {
 		const d = deferred();
-		const { tracker, records } = harness(d.complete, { stepWaitMs: 50 });
+		const { tracker, records, shown } = harness(d.complete, { stepWaitMs: 50 });
 		tracker.turnStart(0);
 		tracker.textDelta("Profile the remainder:");
 		tracker.toolStart("t1", "bash", {});
@@ -175,7 +175,23 @@ describe("ActivityTracker", () => {
 		d.calls[2].resolve("Skipping re-renders when state is unchanged");
 		await tracker.turnEnd();
 		assert.deepEqual(records.map((r) => r.text), ["Profiling the remaining latency", "Skipping re-renders when state is unchanged"]);
+		assert.equal(shown.at(-1), undefined, "after a breadcrumb the live line returns to the spinner");
 		assert.deepEqual(records[1].toolCallIds, ["t3"]);
+	});
+
+	it("the live line never repeats the breadcrumb just left", async () => {
+		const d = deferred();
+		const { tracker, shown } = harness(d.complete, { stepWaitMs: 50 });
+		tracker.turnStart(0);
+		tracker.textDelta("Check it:");
+		tracker.toolStart("t1", "read", { path: "a.ts" });
+		d.calls[0].resolve("Checking the config loader");
+		await tracker.turnEnd();
+		tracker.turnStart(1);
+		tracker.toolStart("t2", "read", { path: "b.ts" });
+		d.calls[1].resolve("Checking the config loader");
+		await flush();
+		assert.equal(shown.at(-1), undefined);
 	});
 
 	it("turnEnd does not wait forever for a slow live line", async () => {

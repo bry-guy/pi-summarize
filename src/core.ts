@@ -207,6 +207,9 @@ export class ActivityTracker {
 		const source = fresh ? this.lastSource : "fallback";
 		const leadIn = step.text.trim() !== "";
 		const continues = fresh && this.continues;
+		// The breadcrumb now covers this step; the live line goes back to the plain spinner until the next step has its own summary.
+		this.last = undefined;
+		this.opts.show(undefined);
 		if (this.crumb && (line === this.crumb || (!leadIn && (continues || source === "fallback" || similarLine(this.crumb, line))))) return;
 		this.crumb = line;
 		this.opts.record({ text: line, at: Date.now(), turn, source, toolCallIds: step.ids, thinking: step.thinking.trim() || undefined, tools: step.tools });
@@ -274,11 +277,15 @@ export class ActivityTracker {
 		const same = text?.toUpperCase() === "SAME";
 		if (this.lastTurn !== this.turn) this.continues = false;
 		this.lastTurn = this.turn;
-		if (same) this.continues = true;
-		if (same && this.last) return; // the current line still describes this step
-		const line = text && !same ? text : fallbackLine(this.lastTool);
-		this.lastSource = text && !same ? "model" : "fallback";
+		if (same) {
+			this.continues = true;
+			return; // nothing new to say; keep whatever is showing (possibly just the spinner)
+		}
+		const line = text ?? fallbackLine(this.lastTool);
+		this.lastSource = text ? "model" : "fallback";
 		if (line === this.last || (text && similarLine(this.last, line))) return;
+		// Never echo the breadcrumb just left; a generic fallback is no better than the bare spinner.
+		if (line === this.crumb || (text && similarLine(this.crumb, line)) || line === "Working…") return;
 		this.last = line;
 		this.opts.show(line);
 	}
