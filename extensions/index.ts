@@ -24,7 +24,7 @@ const ACTIVITY_CHANNEL = "pi-summarize:activity";
 
 const agentDir = process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent");
 
-function loadSettings(): unknown {
+function loadSettings(): Record<string, unknown> {
 	try {
 		return JSON.parse(readFileSync(join(agentDir, "settings.json"), "utf8"));
 	} catch {
@@ -39,6 +39,15 @@ function resolveModel(ctx: Ctx, spec: string | undefined) {
 	return slash > 0 ? ctx.modelRegistry.find(spec.slice(0, slash), spec.slice(slash + 1)) : undefined;
 }
 
+/** The pre-streamSimple ModelRegistry API that older SDK hosts (e.g. pi-web) expose. */
+interface LegacyRegistry {
+	complete(
+		model: NonNullable<ReturnType<typeof resolveModel>>,
+		context: Context,
+		options: { reasoning?: string; signal: AbortSignal; maxTokens: number },
+	): Promise<{ content: Parameters<typeof textOf>[0]; stopReason?: string }>;
+}
+
 /** One side-model call. Rejects when no usable model exists, the call fails, or the signal aborts. */
 async function complete(ctx: Ctx, cfg: SummarizeConfig, prompt: string, signal: AbortSignal, maxTokens: number) {
 	const model = resolveModel(ctx, cfg.model);
@@ -46,11 +55,15 @@ async function complete(ctx: Ctx, cfg: SummarizeConfig, prompt: string, signal: 
 	const context: Context = {
 		messages: [{ role: "user", content: [{ type: "text", text: prompt }], timestamp: Date.now() }],
 	};
-	const stream = ctx.modelRegistry.streamSimple(model, context, {
-		...(cfg.thinking === "off" ? {} : { reasoning: cfg.thinking }),
-		signal,
-		maxTokens,
-	});
+	const options = { ...(cfg.thinking === "off" ? {} : { reasoning: cfg.thinking }), signal, maxTokens };
+	// Older SDK hosts (e.g. pi-web) only have the non-streaming complete().
+	if (!ctx.modelRegistry.streamSimple) {
+		// SAFETY: streamSimple is absent only on older registries, which all have complete().
+		const message = await (ctx.modelRegistry as unknown as LegacyRegistry).complete(model, context, options);
+		if (message.stopReason === "error" || message.stopReason === "aborted") throw new Error("summary model error");
+		return textOf(message.content);
+	}
+	const stream = ctx.modelRegistry.streamSimple(model, context, options);
 	for await (const event of stream) {
 		if (event.type === "done") return textOf(event.message.content);
 		if (event.type === "error") throw new Error("summary model error");
@@ -79,7 +92,7 @@ export default function (pi: ExtensionAPI) {
 			},
 		});
 		// With tool rows hidden, hidden-thinking placeholders pile up between breadcrumbs; the breadcrumbs carry the thinking on Ctrl+O.
-		if (cfg.activity && ctx.hasUI) ctx.ui.setHiddenThinkingLabel("");
+		if (cfg.activity && ctx.hasUI) ctx.ui.setHiddenThinkingLabel?.("");
 		if (cfg.model && !resolveModel(ctx, cfg.model) && ctx.hasUI) {
 			ctx.ui.notify(`pi-summarize: model "${cfg.model}" not found; using fallback lines`, "warning");
 		}
@@ -169,7 +182,8 @@ type Data = { kind?: string; text?: string; source?: string; thinking?: string; 
  * Expanded (Ctrl+O): tools render normally, and summaries show what they summarized.
  */
 function registerRenderers(pi: ExtensionAPI, enabled: () => boolean) {
-	pi.registerEntryRenderer<Data>("pi-summarize", (entry, { expanded }, theme) => {
+	// TUI-only APIs; older SDK hosts (e.g. pi-web) lack them and must still load the extension.
+	pi.registerEntryRenderer?.<Data>("pi-summarize", (entry, { expanded }, theme) => {
 		const d = entry.data;
 		if (d?.kind !== "activity" || !d.text || !enabled()) return new Container();
 		if (d.source === "fallback" && !expanded) return new Container(); // generic lines add nothing at a glance
@@ -182,7 +196,7 @@ function registerRenderers(pi: ExtensionAPI, enabled: () => boolean) {
 		return box;
 	});
 
-	pi.registerToolRenderer((toolName, next): Renderers | undefined => {
+	pi.registerToolRenderer?.((toolName, next): Renderers | undefined => {
 		const inner = next();
 		if (!enabled()) return inner;
 		// renderShell "self" lets an empty render collapse the row to zero lines; when expanded we draw the shell ourselves.
