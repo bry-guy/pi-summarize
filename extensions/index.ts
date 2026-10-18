@@ -78,6 +78,8 @@ export default function (pi: ExtensionAPI) {
 				pi.events.emit(ACTIVITY_CHANNEL, { sessionId, ...entry });
 			},
 		});
+		// With tool rows hidden, hidden-thinking placeholders pile up between breadcrumbs; the breadcrumbs carry the thinking on Ctrl+O.
+		if (cfg.activity && ctx.hasUI) ctx.ui.setHiddenThinkingLabel("");
 		if (cfg.model && !resolveModel(ctx, cfg.model) && ctx.hasUI) {
 			ctx.ui.notify(`pi-summarize: model "${cfg.model}" not found; using fallback lines`, "warning");
 		}

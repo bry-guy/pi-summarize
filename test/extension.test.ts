@@ -53,7 +53,7 @@ describe("extension wiring", () => {
 		ctx = {
 			hasUI: true,
 			model: { provider: "openai", id: "gpt-session" },
-			ui: { setWorkingMessage: (m?: string) => working.push(m), notify: () => {} },
+			ui: { setWorkingMessage: (m?: string) => working.push(m), notify: () => {}, setHiddenThinkingLabel: () => {} },
 			sessionManager: { getBranch: () => [], getSessionId: () => "child-session" },
 			modelRegistry: {
 				find: (provider: string, id: string) => ({ provider, id }),
