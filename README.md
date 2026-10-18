@@ -4,10 +4,10 @@ A [pi](https://github.com/earendil-works/pi) extension package with two features
 
 1. **Live activity line.** While the agent works, the working indicator shows one short, specific present-progressive line (≤ 12 words) describing the goal rather than the command, e.g. `Checking why the sync test fails`. Tool calls summarize immediately; text and thinking summarize at most every ~2 s. Subagents run their own copy of the extension and narrate themselves; the parent does not relay their progress. While a tool runs, the line shows elapsed time every 5 s (display only, not recorded), so long waits visibly move. Calls are cancelled when superseded or when the run ends, and failures or timeouts (10 s) fall back to a deterministic line such as `Reading files.js…` or `Working…`.
 
-   In the transcript, tool rows are hidden and each recorded line shows as `◆ <summary>`. Ctrl+O (expand) brings back the tool rows and shows each summary's thinking tail and tool calls. With `activity` off, tools render normally.
+   In the transcript, tool rows are hidden. Each step (one model turn that runs tools) leaves one breadcrumb, `◆ <summary>`, where its tool rows were, recorded at `turn_end` from that step's live line (waiting up to 2.5 s for it). A tool-only step with the same goal as the previous breadcrumb merges into it; a step with its own lead-in text always gets its own breadcrumb. Ctrl+O (expand) brings back the tool rows and shows each summary's thinking tail and tool calls. With `activity` off, tools render normally.
 2. **Auto-title.** After the first assistant reply in a session with no name, it sets a 2–4 word session name. It never overwrites a name you set, and it does not retry once it has named the session.
 
-Each shown line and each generated title is persisted with `pi.appendEntry("pi-summarize", …)`. These custom entries are not sent to the LLM. Hosts can read them from the session JSONL.
+Each breadcrumb and each generated title is persisted with `pi.appendEntry("pi-summarize", …)`. These custom entries are not sent to the LLM. Hosts can read them from the session JSONL.
 
 ```jsonc
 // {"type":"custom","customType":"pi-summarize","data":{"kind":"activity","text":"Reading files.js…","at":1760000000000,"turn":2,"source":"fallback","toolCallIds":["t1"]}}
@@ -16,7 +16,7 @@ Each shown line and each generated title is persisted with `pi.appendEntry("pi-s
 
 ## Host integration
 
-Each shown activity line is also emitted on the extension bus as `pi.events` channel `pi-summarize:activity`, with payload `{ sessionId, text, at, turn, source, toolCallIds }`. `sessionId` is the session that produced the line, so a host running several sessions can route by it.
+Each breadcrumb is also emitted on the extension bus as `pi.events` channel `pi-summarize:activity`, with payload `{ sessionId, text, at, turn, source, toolCallIds }`. `sessionId` is the session that produced the line, so a host running several sessions can route by it.
 
 Subagent children get their own bus unless the host passes one to their resource loader, so emits from a child do not reach the parent by default. Persisted history needs no bus: a child's session JSONL (the subagent `outputFile`) already contains its `pi-summarize` activity entries.
 

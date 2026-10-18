@@ -108,6 +108,8 @@ export interface TrackerOptions {
 	record(entry: ActivityRecord): void;
 	debounceMs?: number;
 	timeoutMs?: number;
+	/** How long turnEnd waits for the step's live line before using the fallback. */
+	stepWaitMs?: number;
 	/** While a tool runs with no new line, re-show the line with elapsed time this often. 0 disables. */
 	heartbeatMs?: number;
 }
@@ -119,13 +121,17 @@ export class ActivityTracker {
 	private lastTool?: ToolActivity;
 	private text = "";
 	private thinking = "";
-	private toolCallIds: string[] = [];
+	/** The current step (one model turn): its lead-in text, thinking and tool calls. */
+	private step = { text: "", thinking: "", tools: [] as string[], ids: [] as string[] };
 	private timer?: ReturnType<typeof setTimeout>;
 	private inflight?: AbortController;
+	private pending?: Promise<void>;
 	private seq = 0;
 	private last?: string;
-	/** Recently recorded breadcrumbs; survives across runs so a new run does not repeat the last goal. */
-	private recent: string[] = [];
+	private lastTurn = -1;
+	private lastSource: ActivityRecord["source"] = "fallback";
+	/** Last recorded breadcrumb; survives across runs so a tool-only step can merge into it. */
+	private crumb?: string;
 	private stale = false;
 	private toolSince?: number;
 	private beat?: ReturnType<typeof setInterval>;
@@ -143,20 +149,22 @@ export class ActivityTracker {
 		this.lastTool = undefined;
 		this.text = "";
 		this.thinking = "";
-		this.toolCallIds = [];
 	}
 
 	turnStart(turn: number): void {
 		this.turn = turn;
+		this.step = { text: "", thinking: "", tools: [], ids: [] };
 	}
 
 	thinkingDelta(delta: string): void {
 		this.thinking = tail(this.thinking + delta, 400);
+		this.step.thinking = tail(this.step.thinking + delta, 400);
 		this.schedule();
 	}
 
 	textDelta(delta: string): void {
 		this.text = tail(this.text + delta, 600);
+		this.step.text = tail(this.step.text + delta, 600);
 		this.schedule();
 	}
 
@@ -166,14 +174,39 @@ export class ActivityTracker {
 		this.toolSince = Date.now();
 		this.stale = true; // no heartbeat until this tool's line is decided
 		this.startBeat();
-		this.tools = [...this.tools, `${name}(${clip(JSON.stringify(args ?? {}), 160)})`].slice(-4);
-		this.toolCallIds.push(toolCallId);
-		void this.flush();
+		const call = `${name}(${clip(JSON.stringify(args ?? {}), 160)})`;
+		this.tools = [...this.tools, call].slice(-4);
+		this.step.tools.push(call);
+		this.step.ids.push(toolCallId);
+		this.kick();
 	}
 
 	toolEnd(): void {
 		this.toolSince = undefined;
 		this.schedule();
+	}
+
+	/**
+	 * A step that ran tools ends: record one breadcrumb where its hidden tool rows sit.
+	 * Waits briefly for the step's live line; a tool-only step with the same goal merges into the previous breadcrumb.
+	 */
+	async turnEnd(): Promise<void> {
+		const step = this.step;
+		const turn = this.turn;
+		if (!step.ids.length) return;
+		this.step = { text: "", thinking: "", tools: [], ids: [] };
+		if (this.pending) {
+			let timer: ReturnType<typeof setTimeout> | undefined;
+			await Promise.race([this.pending, new Promise((r) => (timer = setTimeout(r, this.opts.stepWaitMs ?? 2500)))]);
+			clearTimeout(timer);
+		}
+		const fresh = this.last !== undefined && this.lastTurn === turn;
+		const line = fresh ? (this.last as string) : fallbackLine(this.lastTool);
+		const source = fresh ? this.lastSource : "fallback";
+		const leadIn = step.text.trim() !== "";
+		if (this.crumb && (line === this.crumb || (!leadIn && (source === "fallback" || similarLine(this.crumb, line))))) return;
+		this.crumb = line;
+		this.opts.record({ text: line, at: Date.now(), turn, source, toolCallIds: step.ids, thinking: step.thinking.trim() || undefined, tools: step.tools });
 	}
 
 	/** Keeps the line visibly alive during long tools: same text plus elapsed seconds, display only. */
@@ -194,7 +227,6 @@ export class ActivityTracker {
 		if (this.beat) clearInterval(this.beat);
 		this.beat = undefined;
 		this.toolSince = undefined;
-		if (this.toolCallIds.length) void this.recordLate();
 		this.inflight?.abort();
 		this.inflight = undefined;
 		this.seq++;
@@ -205,7 +237,7 @@ export class ActivityTracker {
 	/** Max-wait debounce: the first event in a window arms one flush, so long streams still update. */
 	private schedule(): void {
 		if (this.timer) return;
-		this.timer = setTimeout(() => void this.flush(), this.opts.debounceMs ?? 2000);
+		this.timer = setTimeout(() => this.kick(), this.opts.debounceMs ?? 2000);
 	}
 
 	private clearTimer(): void {
@@ -213,6 +245,11 @@ export class ActivityTracker {
 		this.timer = undefined;
 	}
 
+	private kick(): void {
+		this.pending = this.flush();
+	}
+
+	/** Updates the live working line only; breadcrumbs are recorded per step in turnEnd. */
 	private async flush(): Promise<void> {
 		this.clearTimer();
 		const seq = ++this.seq;
@@ -220,7 +257,6 @@ export class ActivityTracker {
 		const ctl = new AbortController();
 		this.inflight = ctl;
 		const timeout = setTimeout(() => ctl.abort(), this.opts.timeoutMs ?? 10_000);
-		const ids = [...this.toolCallIds];
 		let text: string | undefined;
 		try {
 			text = cleanLine(await this.opts.complete(this.prompt(), ctl.signal));
@@ -232,69 +268,34 @@ export class ActivityTracker {
 		if (seq !== this.seq) return; // a newer flush or stop() superseded this one
 		this.stale = false;
 		this.inflight = undefined;
-		const source = text ? "model" : "fallback";
-		const line = text ?? fallbackLine(this.lastTool);
-		if (line.toUpperCase() === "SAME") {
-			if (!this.last && this.recent.length) this.opts.show((this.last = this.recent[this.recent.length - 1])); // new run, same goal
-			return; // keep ids for the next line
-		}
-		if ((text && similarLine(this.last, line)) || line === this.last) return;
+		const same = text?.toUpperCase() === "SAME";
+		this.lastTurn = this.turn;
+		if (same && this.last) return; // the current line still describes this step
+		const line = text && !same ? text : fallbackLine(this.lastTool);
+		this.lastSource = text && !same ? "model" : "fallback";
+		if (line === this.last || (text && similarLine(this.last, line))) return;
 		this.last = line;
 		this.opts.show(line);
-		if (this.isRepeat(line)) return; // the live line may reword; the transcript keeps one breadcrumb per goal
-		this.toolCallIds = [];
-		this.remember(line);
-		this.opts.record({ text: line, at: Date.now(), turn: this.turn, source, toolCallIds: ids, thinking: this.thinking.trim() || undefined, tools: [...this.tools] });
-	}
-
-	private isRepeat(line: string): boolean {
-		return this.recent.some((r) => r === line || similarLine(r, line));
-	}
-
-	private remember(line: string): void {
-		this.recent = [...this.recent, line].slice(-3);
-	}
-
-	/** Short runs end before their line is recorded; record it anyway so hidden tool rows still leave a summary. */
-	private async recordLate(): Promise<void> {
-		const ids = [...this.toolCallIds];
-		const [prompt, last, tool, turn] = [this.prompt(), this.last, this.lastTool, this.turn];
-		const [thinking, tools] = [this.thinking.trim() || undefined, [...this.tools]];
-		this.toolCallIds = [];
-		let text: string | undefined;
-		try {
-			text = cleanLine(await this.opts.complete(prompt, AbortSignal.timeout(this.opts.timeoutMs ?? 10_000)));
-		} catch {
-			text = undefined;
-		}
-		if (text?.toUpperCase() === "SAME" && (last || this.recent.length)) return; // an earlier breadcrumb covers these tools
-		const line = text ?? fallbackLine(tool);
-		if (this.isRepeat(line)) return;
-		this.remember(line);
-		try {
-			this.opts.record({ text: line, at: Date.now(), turn, source: text ? "model" : "fallback", toolCallIds: ids, thinking, tools });
-		} catch {
-			// session may already be gone (shutdown)
-		}
 	}
 
 	private prompt(): string {
+		const leadIn = this.step.text.trim();
 		return [
-			"You narrate the GOAL a coding agent is pursuing right now, not the command it runs.",
-			"Infer intent from the user's request, the agent's own words, and its recent tool calls (latest last).",
+			"You narrate the GOAL of a coding agent's current step, not the command it runs.",
+			"Infer intent from the agent's lead-in for this step, the user's request, and the step's tool calls.",
 			"Never name a shell command, flag, or tool; say why it is being run.",
-			"Good: \"Checking why the sync test fails\", \"Finding where titles get set\", \"Delegating a search for config loaders\".",
-			"Bad: \"Running git status\", \"Running bash\", \"Reading core.ts\".",
+			'Good: "Checking why the sync test fails", "Finding where titles get set", "Skipping re-renders when state is unchanged".',
+			'Bad: "Running git status", "Running bash", "Reading core.ts".',
 			"Reply with ONE line, at most 12 words, present-progressive.",
 			"No quotes, no preamble, no trailing period. Output only the line.",
-			this.recent.length ? `Breadcrumbs so far (latest last): ${this.recent.join(" | ")}` : "",
-			this.last ? `Current line: ${this.last}` : "",
-			this.recent.length || this.last ? "Reply exactly SAME unless the goal clearly changed from these. Rewording the same goal is SAME." : "",
+			this.crumb ? `Previous step: ${this.crumb}. Describe what is new in this step; do not repeat it.` : "",
+			this.last && !leadIn ? `Current line: ${this.last}\nIf it still describes the work, reply exactly SAME.` : "",
 			"",
 			"<context>",
 			this.userPrompt ? `User asked: ${clip(this.userPrompt, 300)}` : "",
+			leadIn ? `Agent's lead-in for this step: ${clip(leadIn, 400)}` : "",
 			this.tools.length ? `Recent tool calls (latest last): ${this.tools.join("; ")}` : "",
-			this.text.trim() ? `Assistant text tail: ${clip(this.text, 600)}` : "",
+			!leadIn && this.text.trim() ? `Assistant text tail: ${clip(this.text, 600)}` : "",
 			this.thinking.trim() ? `Thinking tail: ${clip(this.thinking, 300)}` : "",
 			"</context>",
 		]

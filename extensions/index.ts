@@ -106,6 +106,12 @@ export default function (pi: ExtensionAPI) {
 		if (cfg.activity) tracker?.toolStart(event.toolCallId, event.toolName, event.args);
 	});
 
+	// Awaited so the breadcrumb lands where the step's hidden tool rows are, before the next step's text.
+	pi.on("turn_end", async (_event, ctx) => {
+		live = ctx;
+		if (cfg.activity) await tracker?.turnEnd();
+	});
+
 	pi.on("tool_execution_end", async (_event, ctx) => {
 		live = ctx;
 		if (cfg.activity) tracker?.toolEnd();

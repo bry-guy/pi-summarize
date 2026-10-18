@@ -12,7 +12,7 @@ function deferred() {
 	return { calls, complete };
 }
 
-function harness(complete: (p: string, s: AbortSignal) => Promise<string>, extra: { debounceMs?: number } = {}) {
+function harness(complete: (p: string, s: AbortSignal) => Promise<string>, extra: { debounceMs?: number; stepWaitMs?: number } = {}) {
 	const shown: (string | undefined)[] = [];
 	const records: { text: string; source: string; toolCallIds: string[] }[] = [];
 	const tracker = new ActivityTracker({
@@ -88,6 +88,8 @@ describe("ActivityTracker", () => {
 		d.calls[0].resolve("Checking the sync adapter…");
 		await flush();
 		assert.deepEqual(shown, ["Checking the sync adapter…"]);
+		assert.equal(records.length, 0); // breadcrumbs wait for the step to end
+		await tracker.turnEnd();
 		assert.equal(records[0].source, "model");
 		assert.deepEqual(records[0].toolCallIds, ["t1"]);
 	});
@@ -99,6 +101,7 @@ describe("ActivityTracker", () => {
 		d.calls[0].reject(new Error("boom"));
 		await flush();
 		assert.deepEqual(shown, ["Working…"]);
+		await tracker.turnEnd();
 		assert.equal(records[0].source, "fallback");
 	});
 
@@ -152,31 +155,37 @@ describe("ActivityTracker", () => {
 		assert.deepEqual(shown, [undefined]);
 	});
 
-	it("stop() still records a line for tools no line covered yet, without showing it", async () => {
+	it("records one breadcrumb per step; a tool-only step with the same goal merges", async () => {
 		const d = deferred();
-		const { tracker, shown, records } = harness(d.complete);
-		tracker.toolStart("t1", "bash", { command: "ls" });
-		tracker.stop();
-		d.calls[1].resolve("Listing the workspace");
-		await flush();
-		assert.deepEqual(shown, [undefined]);
-		assert.equal(records[0].text, "Listing the workspace");
-		assert.deepEqual(records[0].toolCallIds, ["t1"]);
+		const { tracker, records } = harness(d.complete, { stepWaitMs: 50 });
+		tracker.turnStart(0);
+		tracker.textDelta("Profile the remainder:");
+		tracker.toolStart("t1", "bash", {});
+		assert.match(d.calls[0].prompt, /lead-in for this step: Profile the remainder/);
+		d.calls[0].resolve("Profiling the remaining latency");
+		await tracker.turnEnd();
+		tracker.turnStart(1); // tool-only step, same goal
+		tracker.toolStart("t2", "bash", {});
+		assert.match(d.calls[1].prompt, /Previous step: Profiling the remaining latency/);
+		d.calls[1].resolve("SAME");
+		await tracker.turnEnd();
+		tracker.turnStart(2); // new lead-in: always its own breadcrumb
+		tracker.textDelta("Now skip re-render when state is unchanged:");
+		tracker.toolStart("t3", "edit", {});
+		d.calls[2].resolve("Skipping re-renders when state is unchanged");
+		await tracker.turnEnd();
+		assert.deepEqual(records.map((r) => r.text), ["Profiling the remaining latency", "Skipping re-renders when state is unchanged"]);
+		assert.deepEqual(records[1].toolCallIds, ["t3"]);
 	});
 
-	it("records one breadcrumb per goal, even across runs", async () => {
+	it("turnEnd does not wait forever for a slow live line", async () => {
 		const d = deferred();
-		const { tracker, records } = harness(d.complete);
-		tracker.toolStart("t1", "bash", {});
-		d.calls[0].resolve("Checking how pi-worktree-include gets published to npm");
-		await flush();
-		tracker.stop();
-		tracker.begin("next");
-		tracker.toolStart("t2", "bash", {});
-		assert.match(d.calls.at(-1)!.prompt, /Breadcrumbs so far.*gets published to npm/);
-		d.calls.at(-1)!.resolve("Checking how pi-worktree-include got published to npm");
-		await flush();
-		assert.equal(records.length, 1);
+		const { tracker, records } = harness(d.complete, { stepWaitMs: 20 });
+		tracker.turnStart(0);
+		tracker.toolStart("t1", "read", { path: "a/b.ts" });
+		await tracker.turnEnd();
+		assert.equal(records[0].text, "Reading b.ts…");
+		assert.equal(records[0].source, "fallback");
 	});
 
 	it("does not re-show an identical line", async () => {

@@ -81,6 +81,7 @@ describe("extension wiring", () => {
 			ctx,
 		);
 		await sleep(20);
+		await handlers.turn_end({ type: "turn_end" }, ctx);
 
 		assert.equal(streamCalls[0].provider, "anthropic");
 		assert.equal(streamCalls[0].id, "claude-haiku-5-5");
