@@ -16,9 +16,7 @@ Each breadcrumb and each generated title is persisted with `pi.appendEntry("pi-s
 
 ## Host integration
 
-Each breadcrumb is also emitted on the extension bus as `pi.events` channel `pi-summarize:activity`, with payload `{ sessionId, text, at, turn, source, toolCallIds }`. `sessionId` is the session that produced the line, so a host running several sessions can route by it.
-
-Subagent children get their own bus unless the host passes one to their resource loader, so emits from a child do not reach the parent by default. Persisted history needs no bus: a child's session JSONL (the subagent `outputFile`) already contains its `pi-summarize` activity entries.
+A non-TUI host (such as pi-web) needs only two things: show the extension's `setWorkingMessage` text as the live line (falling back to `Working…` when it is cleared), and render the `activity` entries above, grouping each step's tools by `toolCallIds`. Subagents write their own `pi-summarize` activity entries into their session JSONL (the subagent `outputFile`).
 
 ## Install
 
