@@ -15,14 +15,15 @@ function deferred() {
 function harness(complete: (p: string, s: AbortSignal) => Promise<string>, extra: { debounceMs?: number; stepWaitMs?: number; firstDebounceMs?: number } = {}) {
 	const shown: (string | undefined)[] = [];
 	const records: { text: string; source: string; toolCallIds: string[] }[] = [];
+	const merged: { text: string; toolCallIds: string[] }[] = [];
 	const tracker = new ActivityTracker({
 		complete,
 		show: (t) => shown.push(t),
-		record: (r) => records.push(r),
+		record: (r) => (r.continues ? merged : records).push(r),
 		heartbeatMs: 0,
 		...extra,
 	});
-	return { tracker, shown, records };
+	return { tracker, shown, records, merged };
 }
 
 describe("resolveConfig", () => {
@@ -157,7 +158,7 @@ describe("ActivityTracker", () => {
 
 	it("records one breadcrumb per step; a tool-only step with the same goal merges", async () => {
 		const d = deferred();
-		const { tracker, records, shown } = harness(d.complete, { stepWaitMs: 50 });
+		const { tracker, records, shown, merged } = harness(d.complete, { stepWaitMs: 50 });
 		tracker.turnStart(0);
 		tracker.textDelta("Profile the remainder:");
 		tracker.toolStart("t1", "bash", {});
@@ -177,6 +178,7 @@ describe("ActivityTracker", () => {
 		assert.deepEqual(records.map((r) => r.text), ["Profiling the remaining latency", "Skipping re-renders when state is unchanged"]);
 		assert.equal(shown.at(-1), undefined, "after a breadcrumb the live line returns to the spinner");
 		assert.deepEqual(records[1].toolCallIds, ["t3"]);
+		assert.deepEqual(merged.map((r) => [r.text, r.toolCallIds]), [["Profiling the remaining latency", ["t2"]]], "the merged step names its breadcrumb and tools");
 	});
 
 	it("the live line never repeats the breadcrumb just left", async () => {

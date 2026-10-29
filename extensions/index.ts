@@ -150,7 +150,7 @@ export default function (pi: ExtensionAPI) {
 }
 
 type Renderers = NonNullable<ReturnType<Parameters<ExtensionAPI["registerToolRenderer"]>[0]>>;
-type Data = { kind?: string; text?: string; source?: string; thinking?: string; tools?: string[] };
+type Data = { kind?: string; text?: string; source?: string; thinking?: string; tools?: string[]; continues?: boolean };
 
 /**
  * Collapsed (default): tool rows render nothing, so the summary lines stand in for them.
@@ -161,9 +161,9 @@ function registerRenderers(pi: ExtensionAPI, enabled: () => boolean) {
 		const d = entry.data;
 		// undefined, not an empty component: pi adds a spacer line before every component it is given.
 		if (d?.kind !== "activity" || !d.text || !enabled()) return undefined;
-		if (d.source === "fallback" && !expanded) return undefined; // generic lines add nothing at a glance
+		if ((d.source === "fallback" || d.continues) && !expanded) return undefined; // generic lines and merged steps add nothing at a glance
 		const box = new Box(1, 0);
-		box.addChild(new Text(`${theme.fg("accent", "◆")} ${theme.fg("muted", d.text)}`, 0, 0));
+		box.addChild(new Text(d.continues ? theme.fg("dim", "  ↳ same goal") : `${theme.fg("accent", "◆")} ${theme.fg("muted", d.text)}`, 0, 0));
 		if (expanded) {
 			if (d.thinking) box.addChild(new Text(theme.fg("dim", `  thinking: ${d.thinking.replace(/\s+/g, " ")}`), 0, 0));
 			for (const t of d.tools ?? []) box.addChild(new Text(theme.fg("dim", `  ${t}`), 0, 0));

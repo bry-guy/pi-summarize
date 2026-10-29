@@ -99,6 +99,8 @@ export interface ActivityRecord {
 	/** What the line summarized, for the expanded transcript view. */
 	thinking?: string;
 	tools?: string[];
+	/** This step merged into the previous breadcrumb: `text` repeats it, and these tool calls join its group. */
+	continues?: true;
 }
 
 export interface TrackerOptions {
@@ -223,9 +225,14 @@ export class ActivityTracker {
 		this.last = undefined;
 		dbg({ ev: "turnEnd", turn, line, source, fresh, continues: fresh && this.continues });
 		this.opts.show(undefined);
-		if (this.crumb && (line === this.crumb || (!leadIn && (continues || source === "fallback" || similarLine(this.crumb, line))))) return;
+		const entry = { at: Date.now(), turn, toolCallIds: step.ids, thinking: step.thinking.trim() || undefined, tools: step.tools };
+		if (this.crumb && (line === this.crumb || (!leadIn && (continues || source === "fallback" || similarLine(this.crumb, line))))) {
+			// Recorded anyway, so hosts can group this step's tool calls under the breadcrumb it merged into.
+			this.opts.record({ text: this.crumb, source, continues: true, ...entry });
+			return;
+		}
 		this.crumb = line;
-		this.opts.record({ text: line, at: Date.now(), turn, source, toolCallIds: step.ids, thinking: step.thinking.trim() || undefined, tools: step.tools });
+		this.opts.record({ text: line, source, ...entry });
 	}
 
 	/** Keeps the line visibly alive during long tools: same text plus elapsed seconds, display only. */
