@@ -225,6 +225,17 @@ describe("ActivityTracker", () => {
 		assert.equal(d.calls.length, 1);
 	});
 
+	it("never records the step's thinking", async () => {
+		const d = deferred();
+		const { tracker, records } = harness(d.complete, { stepWaitMs: 20 });
+		tracker.turnStart(0);
+		tracker.thinkingDelta("private reasoning");
+		tracker.toolStart("t1", "read", { path: "a/b.ts" });
+		await tracker.turnEnd();
+		assert.equal(records.length, 1);
+		assert.ok(!JSON.stringify(records[0]).includes("private reasoning"));
+	});
+
 	it("turnEnd does not wait forever for a slow live line", async () => {
 		const d = deferred();
 		const { tracker, records } = harness(d.complete, { stepWaitMs: 20 });

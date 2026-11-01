@@ -132,8 +132,8 @@ export class ActivityTracker {
 	private lastTool?: ToolActivity;
 	private text = "";
 	private thinking = "";
-	/** The current step (one model turn): its lead-in text, thinking and tool calls. */
-	private step = { text: "", thinking: "", tools: [] as string[], ids: [] as string[] };
+	/** The current step (one model turn): its lead-in text and tool calls. */
+	private step = { text: "", tools: [] as string[], ids: [] as string[] };
 	private timer?: ReturnType<typeof setTimeout>;
 	private inflight?: AbortController;
 	private pending?: Promise<void>;
@@ -169,12 +169,11 @@ export class ActivityTracker {
 
 	turnStart(turn: number): void {
 		this.turn = turn;
-		this.step = { text: "", thinking: "", tools: [], ids: [] };
+		this.step = { text: "", tools: [], ids: [] };
 	}
 
 	thinkingDelta(delta: string): void {
 		this.thinking = tail(this.thinking + delta, 400);
-		this.step.thinking = tail(this.step.thinking + delta, 400);
 		this.schedule();
 	}
 
@@ -210,7 +209,7 @@ export class ActivityTracker {
 		const step = this.step;
 		const turn = this.turn;
 		if (!step.ids.length) return;
-		this.step = { text: "", thinking: "", tools: [], ids: [] };
+		this.step = { text: "", tools: [], ids: [] };
 		if (this.pending) {
 			let timer: ReturnType<typeof setTimeout> | undefined;
 			await Promise.race([this.pending, new Promise((r) => (timer = setTimeout(r, this.opts.stepWaitMs ?? 2500)))]);
@@ -225,7 +224,8 @@ export class ActivityTracker {
 		this.last = undefined;
 		dbg({ ev: "turnEnd", turn, line, source, fresh, continues: fresh && this.continues });
 		this.opts.show(undefined);
-		const entry = { at: Date.now(), turn, toolCallIds: step.ids, thinking: step.thinking.trim() || undefined, tools: step.tools };
+		// Thinking is never recorded: model reasoning as plain text in a session file can get later requests that read it blocked.
+		const entry = { at: Date.now(), turn, toolCallIds: step.ids, tools: step.tools };
 		if (this.crumb && (line === this.crumb || (!leadIn && (continues || source === "fallback" || similarLine(this.crumb, line))))) {
 			// Recorded anyway, so hosts can group this step's tool calls under the breadcrumb it merged into.
 			this.opts.record({ text: this.crumb, source, continues: true, ...entry });
