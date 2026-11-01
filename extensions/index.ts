@@ -150,7 +150,7 @@ export default function (pi: ExtensionAPI) {
 }
 
 type Renderers = NonNullable<ReturnType<Parameters<ExtensionAPI["registerToolRenderer"]>[0]>>;
-type Data = { kind?: string; text?: string; source?: string; thinking?: string; tools?: string[]; continues?: boolean };
+type Data = { kind?: string; text?: string; source?: string; tools?: string[]; continues?: boolean };
 
 /**
  * Collapsed (default): tool rows render nothing, so the summary lines stand in for them.
@@ -165,7 +165,6 @@ function registerRenderers(pi: ExtensionAPI, enabled: () => boolean) {
 		const box = new Box(1, 0);
 		box.addChild(new Text(d.continues ? theme.fg("dim", "  ↳ same goal") : `${theme.fg("accent", "◆")} ${theme.fg("muted", d.text)}`, 0, 0));
 		if (expanded) {
-			if (d.thinking) box.addChild(new Text(theme.fg("dim", `  thinking: ${d.thinking.replace(/\s+/g, " ")}`), 0, 0));
 			for (const t of d.tools ?? []) box.addChild(new Text(theme.fg("dim", `  ${t}`), 0, 0));
 		}
 		return box;
