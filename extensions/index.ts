@@ -102,9 +102,15 @@ export default function (pi: ExtensionAPI) {
 		if (cfg.activity) await tracker?.turnEnd();
 	});
 
-	pi.on("tool_execution_end", async (_event, ctx) => {
+	// A tool's own progress (onUpdate), e.g. role_agent's "<role>: <what it does> · 6m 20s". Older pi lacks the event.
+	pi.on("tool_execution_update", async (event, ctx) => {
 		live = ctx;
-		if (cfg.activity) tracker?.toolEnd();
+		if (cfg.activity) tracker?.toolUpdate(event.toolCallId, event.toolName, event.partialResult);
+	});
+
+	pi.on("tool_execution_end", async (event, ctx) => {
+		live = ctx;
+		if (cfg.activity) tracker?.toolEnd(event.toolCallId);
 	});
 
 	pi.on("agent_end", async (_event, ctx) => {
