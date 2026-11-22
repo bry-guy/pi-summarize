@@ -63,17 +63,21 @@ export function fallbackLine(tool?: ToolActivity): string {
 
 const ELAPSED = / · (?:\d+h ?)?(?:\d+m ?)?\d+s$/;
 
+/** Tools whose own progress replaces the live line. Others (bash's raw log, subagents' "N tool uses...") don't. */
+export const OWN_PROGRESS = new Set(["role_agent"]);
+
 /**
  * A running tool's own progress (its onUpdate partial result) as a live line: the last non-empty line of its text,
- * without control characters, at most ~90 characters. Undefined for bash (its partial output is a raw log) and for
- * results without text. A line that already ends in an elapsed time (" · 6m 20s") keeps it when clipped.
+ * without control characters, at most ~90 characters. Undefined for tools outside OWN_PROGRESS and for results
+ * without text. A line that already ends in an elapsed time (" · 6m 20s") keeps it when clipped.
  */
 export function progressLine(toolName: string, partialResult: unknown): string | undefined {
-	if (toolName === "bash") return undefined;
+	if (!OWN_PROGRESS.has(toolName)) return undefined;
 	const content = (partialResult as { content?: { type?: string; text?: unknown }[] } | undefined)?.content;
 	if (!Array.isArray(content)) return undefined;
 	const text = content.map((c) => (c?.type === "text" && typeof c.text === "string" ? c.text : "")).join("\n");
 	const last = text
+		.slice(-400) // only the tail can hold the last line
 		.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "")
 		.split(/[\r\n]+/)
 		.map((l) => l.replace(/[\x00-\x1f\x7f-\x9f]/g, "").trim())

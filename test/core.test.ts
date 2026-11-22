@@ -340,14 +340,16 @@ describe("tool progress", () => {
 
 	it("takes the last non-empty line without control characters", () => {
 		assert.equal(progressLine("role_agent", part("starting\n\x1b[32mr/dev: Fixing tests\x1b[0m · 6m 20s\n\n")), "r/dev: Fixing tests · 6m 20s");
-		assert.equal(progressLine("fetch", part("10%\r50%\r\x07done 90%")), "done 90%");
+		assert.equal(progressLine("role_agent", part("10%\r50%\r\x07done 90%")), "done 90%");
+		assert.equal(progressLine("role_agent", part(`${"old line\n".repeat(5000)}r/dev: newest`)), "r/dev: newest");
 	});
 
-	it("never for bash, nor without text", () => {
+	it("only for allowlisted tools, never without text", () => {
 		assert.equal(progressLine("bash", part("npm test\nok 1")), undefined);
-		assert.equal(progressLine("x", { content: [{ type: "image" }] }), undefined);
-		assert.equal(progressLine("x", undefined), undefined);
-		assert.equal(progressLine("x", part("\n \n")), undefined);
+		assert.equal(progressLine("subagent", part("3 tool uses...")), undefined);
+		assert.equal(progressLine("role_agent", { content: [{ type: "image" }] }), undefined);
+		assert.equal(progressLine("role_agent", undefined), undefined);
+		assert.equal(progressLine("role_agent", part("\n \n")), undefined);
 	});
 
 	it("caps at ~90 characters and keeps a trailing elapsed time", () => {
@@ -355,7 +357,7 @@ describe("tool progress", () => {
 		const line = progressLine("role_agent", part(long))!;
 		assert.ok(line.length <= 90, line);
 		assert.match(line, /… · 12m 05s$/);
-		assert.ok(progressLine("x", part("y".repeat(200)))!.length <= 90);
+		assert.ok(progressLine("role_agent", part("y".repeat(200)))!.length <= 90);
 	});
 
 	it("adds the elapsed time only when the line has none", () => {
@@ -379,4 +381,18 @@ describe("tool progress", () => {
 		assert.equal(records.length, 0);
 		tracker.stop();
 	});
+});
+
+it("a subagent tool's progress leaves the summarized line alone", async () => {
+	const { calls, complete } = deferred();
+	const { tracker, shown } = harness(complete);
+	tracker.toolStart("s1", "subagent", { prompt: "explore" });
+	calls[0]!.resolve("Exploring the sync code");
+	await flush();
+	const before = shown.length;
+	tracker.toolUpdate("s1", "subagent", { content: [{ type: "text", text: "4 tool uses..." }] });
+	tracker.toolEnd("s1");
+	assert.equal(shown.length, before);
+	assert.equal(shown.at(-1), "Exploring the sync code");
+	tracker.stop();
 });
