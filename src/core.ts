@@ -61,6 +61,32 @@ export function fallbackLine(tool?: ToolActivity): string {
 	return `Running ${tool.name}…`;
 }
 
+const ELAPSED = / · (?:\d+h ?)?(?:\d+m ?)?\d+s$/;
+
+/**
+ * A running tool's own progress (its onUpdate partial result) as a live line: the last non-empty line of its text,
+ * without control characters, at most ~90 characters. Undefined for bash (its partial output is a raw log) and for
+ * results without text. A line that already ends in an elapsed time (" · 6m 20s") keeps it when clipped.
+ */
+export function progressLine(toolName: string, partialResult: unknown): string | undefined {
+	if (toolName === "bash") return undefined;
+	const content = (partialResult as { content?: { type?: string; text?: unknown }[] } | undefined)?.content;
+	if (!Array.isArray(content)) return undefined;
+	const text = content.map((c) => (c?.type === "text" && typeof c.text === "string" ? c.text : "")).join("\n");
+	const last = text
+		.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "")
+		.split(/[\r\n]+/)
+		.map((l) => l.replace(/[\x00-\x1f\x7f-\x9f]/g, "").trim())
+		.filter(Boolean)
+		.pop();
+	if (!last) return undefined;
+	const time = ELAPSED.exec(last)?.[0] ?? "";
+	return time ? `${clip(last.slice(0, -time.length), 90 - time.length)}${time}` : clip(last, 90);
+}
+
+/** A progress line plus the tool's elapsed time, unless the line already carries one. */
+export const withElapsed = (line: string, secs: number): string => (ELAPSED.test(line) ? line : `${line} · ${secs}s`);
+
 const words = (text: string): Set<string> =>
 	new Set(text.toLowerCase().replace(/[^a-z0-9_\s-]/g, " ").split(/\s+/).filter((w) => w.length > 2));
 
@@ -150,6 +176,8 @@ export class ActivityTracker {
 	private stale = false;
 	private toolSince?: number;
 	private beat?: ReturnType<typeof setInterval>;
+	/** The running tool's own latest progress line (display only), and that tool's call id. */
+	private progress?: { id: string; line: string };
 
 	private readonly opts: TrackerOptions;
 
@@ -195,8 +223,20 @@ export class ActivityTracker {
 		this.kick();
 	}
 
-	toolEnd(): void {
+	/** A running tool reported progress: show it with the elapsed time instead of the step's summary. Not recorded. */
+	toolUpdate(toolCallId: string, name: string, partialResult: unknown): void {
+		const line = progressLine(name, partialResult);
+		if (!line || !this.toolSince) return;
+		this.progress = { id: toolCallId, line };
+		this.opts.show(withElapsed(line, Math.round((Date.now() - this.toolSince) / 1000)));
+	}
+
+	toolEnd(toolCallId?: string): void {
 		this.toolSince = undefined;
+		if (this.progress && (!toolCallId || this.progress.id === toolCallId)) {
+			this.progress = undefined;
+			this.opts.show(this.last); // the normal line returns
+		}
 		this.schedule();
 	}
 
@@ -239,9 +279,10 @@ export class ActivityTracker {
 		const every = this.opts.heartbeatMs ?? 5000;
 		if (!every || this.beat) return;
 		this.beat = setInterval(() => {
-			if (!this.toolSince || !this.last || this.stale) return;
+			if (!this.toolSince) return;
 			const secs = Math.round((Date.now() - this.toolSince) / 1000);
-			if (secs >= 5) this.opts.show(`${this.last} · ${secs}s`);
+			if (this.progress) this.opts.show(withElapsed(this.progress.line, secs));
+			else if (this.last && !this.stale && secs >= 5) this.opts.show(`${this.last} · ${secs}s`);
 		}, every);
 		(this.beat as { unref?: () => void }).unref?.();
 	}
@@ -252,6 +293,7 @@ export class ActivityTracker {
 		if (this.beat) clearInterval(this.beat);
 		this.beat = undefined;
 		this.toolSince = undefined;
+		this.progress = undefined;
 		this.inflight?.abort();
 		this.inflight = undefined;
 		this.seq++;
@@ -312,7 +354,7 @@ export class ActivityTracker {
 		if (line === this.crumb || (text && similarLine(this.crumb, line)) || line === "Working…") return;
 		this.last = line;
 		dbg({ ev: "show", line });
-		this.opts.show(line);
+		if (!this.progress) this.opts.show(line); // a tool's own progress wins while it runs
 	}
 
 	private prompt(): string {

@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { ActivityTracker, autoTitle, cleanLine, cleanTitle, fallbackLine, resolveConfig, similarLine } from "../src/core.ts";
+import { ActivityTracker, autoTitle, cleanLine, cleanTitle, fallbackLine, progressLine, resolveConfig, similarLine, withElapsed } from "../src/core.ts";
 
 const flush = () => new Promise((r) => setImmediate(r));
 
@@ -332,5 +332,51 @@ describe("similarLine", () => {
 		assert.equal(similarLine("Tracing tool_execution_start events in the pi SDK", "Tracing tool_execution_start events in pi SDK"), true);
 		assert.equal(similarLine("Reading files.js", "Running npm test"), false);
 		assert.equal(similarLine(undefined, "Reading files.js"), false);
+	});
+});
+
+describe("tool progress", () => {
+	const part = (text: string) => ({ content: [{ type: "text", text }] });
+
+	it("takes the last non-empty line without control characters", () => {
+		assert.equal(progressLine("role_agent", part("starting\n\x1b[32mr/dev: Fixing tests\x1b[0m · 6m 20s\n\n")), "r/dev: Fixing tests · 6m 20s");
+		assert.equal(progressLine("fetch", part("10%\r50%\r\x07done 90%")), "done 90%");
+	});
+
+	it("never for bash, nor without text", () => {
+		assert.equal(progressLine("bash", part("npm test\nok 1")), undefined);
+		assert.equal(progressLine("x", { content: [{ type: "image" }] }), undefined);
+		assert.equal(progressLine("x", undefined), undefined);
+		assert.equal(progressLine("x", part("\n \n")), undefined);
+	});
+
+	it("caps at ~90 characters and keeps a trailing elapsed time", () => {
+		const long = `r/dev: ${"word ".repeat(40)}· 12m 05s`;
+		const line = progressLine("role_agent", part(long))!;
+		assert.ok(line.length <= 90, line);
+		assert.match(line, /… · 12m 05s$/);
+		assert.ok(progressLine("x", part("y".repeat(200)))!.length <= 90);
+	});
+
+	it("adds the elapsed time only when the line has none", () => {
+		assert.equal(withElapsed("Downloading 40%", 42), "Downloading 40% · 42s");
+		assert.equal(withElapsed("r/dev: running · 6m 20s", 42), "r/dev: running · 6m 20s");
+	});
+
+	it("shows while the tool runs and the normal line returns at its end; nothing is recorded", async () => {
+		const { calls, complete } = deferred();
+		const { tracker, shown, records } = harness(complete);
+		tracker.toolStart("t1", "role_agent", { role: "r/dev" });
+		calls[0]!.resolve("Delegating the fix to a role");
+		await flush();
+		assert.equal(shown.at(-1), "Delegating the fix to a role");
+		tracker.toolUpdate("t1", "role_agent", part("r/dev: Fixing tests · 1m 05s"));
+		assert.equal(shown.at(-1), "r/dev: Fixing tests · 1m 05s");
+		tracker.toolUpdate("t1", "bash", part("raw log"));
+		assert.equal(shown.at(-1), "r/dev: Fixing tests · 1m 05s");
+		tracker.toolEnd("t1");
+		assert.equal(shown.at(-1), "Delegating the fix to a role");
+		assert.equal(records.length, 0);
+		tracker.stop();
 	});
 });
