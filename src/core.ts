@@ -88,6 +88,9 @@ export function progressLine(toolName: string, partialResult: unknown): string |
 	return time ? `${clip(last.slice(0, -time.length), 90 - time.length)}${time}` : clip(last, 90);
 }
 
+/** Placeholder shown on the live spinner only before a real summary exists for the run. */
+export const DEFAULT_WORKING = "Working...";
+
 /** Format a finished run's summary label, matching pi-web ("Worked 14s · 4 steps"). */
 export function formatRunLabel(durationMs: number, steps: number): string {
 	const secs = Math.round(Math.max(0, durationMs) / 1000);
@@ -196,13 +199,15 @@ export class ActivityTracker {
 		this.opts = opts;
 	}
 
-	/** New agent run: forget the previous run's activity. */
+	/** New agent run: forget the previous run's activity and show the ellipsis placeholder until a summary arrives. */
 	begin(userPrompt?: string): void {
 		this.userPrompt = userPrompt;
 		this.tools = [];
 		this.lastTool = undefined;
+		this.last = undefined;
 		this.text = "";
 		this.thinking = "";
+		this.opts.show(DEFAULT_WORKING);
 	}
 
 	turnStart(turn: number): void {
@@ -246,14 +251,14 @@ export class ActivityTracker {
 		this.toolSince = undefined;
 		if (this.progress && (!toolCallId || this.progress.id === toolCallId)) {
 			this.progress = undefined;
-			this.opts.show(this.last); // the normal line returns
+			this.opts.show(this.last ?? DEFAULT_WORKING); // the normal line returns
 		}
 		this.schedule();
 	}
 
 	/**
-	 * A step that ran tools ends: record one breadcrumb where its hidden tool rows sit.
-	 * Waits briefly for the step's live line; a tool-only step with the same goal merges into the previous breadcrumb.
+	 * A step that ran tools ends: record one breadcrumb for the run summary and non-TUI hosts.
+	 * Waits briefly for the step's live line; keeps the live line visible across turns until a newer summary replaces it.
 	 */
 	async turnEnd(): Promise<void> {
 		const step = this.step;
@@ -270,10 +275,7 @@ export class ActivityTracker {
 		const source = fresh ? this.lastSource : "fallback";
 		const leadIn = step.text.trim() !== "";
 		const continues = fresh && this.continues;
-		// The breadcrumb now covers this step; the live line goes back to the plain spinner until the next step has its own summary.
-		this.last = undefined;
 		dbg({ ev: "turnEnd", turn, line, source, fresh, continues: fresh && this.continues });
-		this.opts.show(undefined);
 		// Thinking is never recorded: model reasoning as plain text in a session file can get later requests that read it blocked.
 		const entry = { at: Date.now(), turn, toolCallIds: step.ids, tools: step.tools };
 		if (this.crumb && (line === this.crumb || (!leadIn && (continues || source === "fallback" || similarLine(this.crumb, line))))) {
@@ -361,8 +363,8 @@ export class ActivityTracker {
 		this.lastSource = text ? "model" : "fallback";
 		if (text || this.stepLine === undefined) this.stepLine = line;
 		if (line === this.last || (text && similarLine(this.last, line))) return;
-		// Never echo the breadcrumb just left; a generic fallback is no better than the bare spinner.
-		if (line === this.crumb || (text && similarLine(this.crumb, line)) || line === "Working…") return;
+		// Generic "Working…" fallback never replaces an active summary (and begin() already shows "Working...").
+		if (line === "Working…" || line === DEFAULT_WORKING) return;
 		this.last = line;
 		dbg({ ev: "show", line });
 		if (!this.progress) this.opts.show(line); // a tool's own progress wins while it runs

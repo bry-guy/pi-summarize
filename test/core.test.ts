@@ -88,7 +88,7 @@ describe("ActivityTracker", () => {
 		assert.match(d.calls[0].prompt, /User asked: fix sync/);
 		d.calls[0].resolve("Checking the sync adapter…");
 		await flush();
-		assert.deepEqual(shown, ["Checking the sync adapter…"]);
+		assert.deepEqual(shown, ["Working...", "Checking the sync adapter…"]);
 		assert.equal(records.length, 0); // breadcrumbs wait for the step to end
 		await tracker.turnEnd();
 		assert.equal(records[0].source, "model");
@@ -176,27 +176,28 @@ describe("ActivityTracker", () => {
 		d.calls[2].resolve("Skipping re-renders when state is unchanged");
 		await tracker.turnEnd();
 		assert.deepEqual(records.map((r) => r.text), ["Profiling the remaining latency", "Skipping re-renders when state is unchanged"]);
-		assert.equal(shown.at(-1), undefined, "after a breadcrumb the live line returns to the spinner");
+		assert.equal(shown.at(-1), "Skipping re-renders when state is unchanged", "live summary stays visible across turns until replaced or stopped");
 		assert.deepEqual(records[1].toolCallIds, ["t3"]);
 		assert.deepEqual(merged.map((r) => [r.text, r.toolCallIds]), [["Profiling the remaining latency", ["t2"]]], "the merged step names its breadcrumb and tools");
 	});
 
-	it("the live line never repeats the breadcrumb just left", async () => {
+	it("keeps the live summary visible across turns instead of flashing Working", async () => {
 		const d = deferred();
 		const { tracker, shown } = harness(d.complete, { stepWaitMs: 50 });
+		tracker.begin("check config");
 		tracker.turnStart(0);
 		tracker.textDelta("Check it:");
 		tracker.toolStart("t1", "read", { path: "a.ts" });
 		d.calls[0].resolve("Checking the config loader");
 		await tracker.turnEnd();
 		tracker.turnStart(1);
-		tracker.toolStart("t2", "read", { path: "b.ts" });
-		d.calls[1].resolve("Checking the config loader");
+		tracker.toolStart("t2", "bash", { command: "ls" });
+		d.calls[1].reject(new Error("boom"));
 		await flush();
-		assert.equal(shown.at(-1), undefined);
+		assert.deepEqual(shown, ["Working...", "Checking the config loader"]);
 	});
 
-	it("records the step's model line as its breadcrumb even when the display suppressed it", async () => {
+	it("records the step's model line as its breadcrumb even when the display suppressed a duplicate", async () => {
 		const d = deferred();
 		const { tracker, records, shown } = harness(d.complete, { stepWaitMs: 50 });
 		tracker.turnStart(0);
@@ -209,7 +210,7 @@ describe("ActivityTracker", () => {
 		tracker.toolStart("t2", "read", { path: "b.ts" });
 		d.calls[1].resolve("Checking the config loader");
 		await tracker.turnEnd();
-		assert.equal(shown.filter(Boolean).length, 1, "the repeat was not displayed");
+		assert.deepEqual(shown, ["Checking the config loader"], "the repeat was not re-shown and turnEnd never cleared it");
 		assert.deepEqual(records.map((r) => [r.text, r.source]), [["Checking the config loader", "model"]], "identical line merges, never a fallback");
 	});
 

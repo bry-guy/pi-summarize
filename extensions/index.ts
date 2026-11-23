@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Box, Container, Text } from "@earendil-works/pi-tui";
+import { Box, Container, MouseRegion, Text } from "@earendil-works/pi-tui";
 import { ActivityTracker, autoTitle, formatRunLabel, resolveConfig, type ActivityRecord, type SummarizeConfig } from "../src/core.ts";
 
 type Ctx = ExtensionContext;
@@ -53,7 +53,9 @@ async function complete(ctx: Ctx, cfg: SummarizeConfig, prompt: string, signal: 
 }
 
 export default function (pi: ExtensionAPI) {
-	registerRenderers(pi, () => cfg.activity);
+	const expandedByRun = new Map<string, boolean>();
+	const lastGlobalByRun = new Map<string, boolean>();
+	registerRenderers(pi, () => cfg.activity, expandedByRun, lastGlobalByRun);
 	let live: Ctx | undefined; // latest context; the one captured at session_start can go stale
 	let cfg: SummarizeConfig = resolveConfig({}, {});
 	let tracker: ActivityTracker | undefined;
@@ -66,6 +68,8 @@ export default function (pi: ExtensionAPI) {
 		cfg = resolveConfig(loadSettings(), process.env);
 		runStartedAt = undefined;
 		runItems = [];
+		expandedByRun.clear();
+		lastGlobalByRun.clear();
 		// Blank label makes pi omit hidden thinking rows (and their spacers) altogether; Ctrl+T still reveals thinking.
 		ctx.ui.setHiddenThinkingLabel(cfg.activity ? "" : undefined);
 		tracker?.stop();
@@ -209,26 +213,48 @@ type Data = {
 
 /**
  * Collapsed (default): tool rows and per-step activity entries render nothing; each finished run renders one
- * `Worked Xs · N steps` line. Expanded (Ctrl+O): tool rows render normally and the run line expands its steps.
+ * clickable `▸ Worked Xs · N steps` line that expands just that run's steps on left-click.
+ * Expanded (Ctrl+O): tool rows render normally and all run summaries expand (clearing per-run click overrides).
  */
-function registerRenderers(pi: ExtensionAPI, enabled: () => boolean) {
+function registerRenderers(
+	pi: ExtensionAPI,
+	enabled: () => boolean,
+	expandedByRun: Map<string, boolean>,
+	lastGlobalByRun: Map<string, boolean>,
+) {
 	pi.registerEntryRenderer<Data>("pi-summarize", (entry, { expanded }, theme) => {
 		const d = entry.data;
 		// undefined, not an empty component: pi adds a spacer line before every component it is given.
 		if (!enabled() || d?.kind !== "run") return undefined;
+		const id = entry.id || String(d.at ?? "");
+		const prevGlobal = lastGlobalByRun.get(id);
+		if (prevGlobal !== undefined && prevGlobal !== expanded) expandedByRun.delete(id);
+		lastGlobalByRun.set(id, expanded);
+
 		const label = formatRunLabel(Number(d.durationMs) || 0, Number(d.steps) || 0);
 		const box = new Box(1, 0);
-		box.addChild(new Text(`${theme.fg("accent", "◆")} ${theme.fg("muted", label)}`, 0, 0));
-		if (expanded) {
-			for (const item of d.items ?? []) {
-				const line = item.continues
-					? theme.fg("dim", "  ↳ same goal")
-					: `  ${theme.fg("accent", "◆")} ${theme.fg("muted", item.text)}`;
-				box.addChild(new Text(line, 0, 0));
-				for (const t of item.tools ?? []) box.addChild(new Text(theme.fg("dim", `    ${t}`), 0, 0));
+		const renderBox = () => {
+			const open = expandedByRun.get(id) ?? expanded;
+			box.clear();
+			box.addChild(new Text(`${theme.fg("accent", open ? "▾" : "▸")} ${theme.fg("muted", label)}`, 0, 0));
+			if (open) {
+				for (const item of d.items ?? []) {
+					const line = item.continues
+						? theme.fg("dim", "  ↳ same goal")
+						: `  ${theme.fg("accent", "◆")} ${theme.fg("muted", item.text)}`;
+					box.addChild(new Text(line, 0, 0));
+					for (const t of item.tools ?? []) box.addChild(new Text(theme.fg("dim", `    ${t}`), 0, 0));
+				}
 			}
-		}
-		return box;
+		};
+		renderBox();
+		return new MouseRegion(box, (event) => {
+			if (event.type !== "click" || event.button !== "left") return undefined;
+			const open = expandedByRun.get(id) ?? expanded;
+			expandedByRun.set(id, !open);
+			renderBox();
+			return { handled: true };
+		});
 	});
 
 	pi.registerToolRenderer((toolName, next): Renderers | undefined => {
