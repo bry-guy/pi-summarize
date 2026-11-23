@@ -21,6 +21,7 @@ describe("extension wiring", () => {
 	let names: string[];
 	let streamCalls: { provider: string; id: string; reasoning?: string; prompt: string }[];
 	let working: (string | undefined)[];
+	let emitted: { channel: string; payload: any }[];
 	let sessionName: string | undefined;
 	let ctx: any;
 
@@ -29,6 +30,7 @@ describe("extension wiring", () => {
 		handlers = {};
 		const pi = {
 			on: (name: string, fn: any) => (handlers[name] = fn),
+			events: { emit: (channel: string, payload: any) => emitted.push({ channel, payload }) },
 			registerEntryRenderer: () => {},
 			registerToolRenderer: () => {},
 			appendEntry: (type: string, data: any) => appended.push({ type, data }),
@@ -46,6 +48,7 @@ describe("extension wiring", () => {
 		names = [];
 		streamCalls = [];
 		working = [];
+		emitted = [];
 		sessionName = name;
 		ctx = {
 			hasUI: true,
@@ -84,6 +87,11 @@ describe("extension wiring", () => {
 		assert.equal(streamCalls[0].id, "claude-haiku-5-5");
 		assert.equal(streamCalls[0].reasoning, "low");
 		assert.deepEqual(working, ["Checking the sync adapter…", undefined], "line shown, then cleared once the step leaves its breadcrumb");
+		assert.deepEqual(
+			emitted.filter((e) => e.channel === "pi-summarize:working").map((e) => e.payload.text),
+			["Checking the sync adapter…", null],
+		);
+		assert.equal(emitted.some((e) => e.channel === "pi-summarize:activity" && e.payload?.data?.text === "Checking the sync adapter…"), true);
 		const activity = appended.find((e) => e.data.kind === "activity");
 		assert.equal(activity?.type, "pi-summarize");
 		assert.deepEqual(activity?.data.toolCallIds, ["t1"]);
