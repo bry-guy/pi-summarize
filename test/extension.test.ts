@@ -94,10 +94,10 @@ describe("extension wiring", () => {
 		assert.equal(streamCalls[0].provider, "anthropic");
 		assert.equal(streamCalls[0].id, "claude-haiku-5-5");
 		assert.equal(streamCalls[0].reasoning, "low");
-		assert.deepEqual(working, ["Checking the sync adapter…", undefined], "line shown, then cleared once the step leaves its breadcrumb");
+		assert.deepEqual(working, ["Working...", "Checking the sync adapter…"], "starts with Working..., then keeps the summary across turn_end");
 		assert.deepEqual(
 			emitted.filter((e) => e.channel === "pi-summarize:working").map((e) => e.payload.text),
-			["Checking the sync adapter…", null],
+			["Working...", "Checking the sync adapter…"],
 		);
 		assert.equal(emitted.some((e) => e.channel === "pi-summarize:activity" && e.payload?.data?.text === "Checking the sync adapter…"), true);
 		const activity = appended.find((e) => e.data.kind === "activity");
@@ -105,6 +105,7 @@ describe("extension wiring", () => {
 		assert.deepEqual(activity?.data.toolCallIds, ["t1"]);
 
 		await handlers.agent_end({ type: "agent_end", messages: [] }, ctx);
+		assert.equal(working.at(-1), undefined, "clears the live line only when the run ends");
 		const run = appended.find((e) => e.data.kind === "run");
 		assert.equal(run?.type, "pi-summarize");
 		assert.equal(run?.data.text, undefined, "run entry omits text so pi-web summaryRecord ignores it");
@@ -113,12 +114,24 @@ describe("extension wiring", () => {
 		assert.equal(run?.data.items[0].text, "Checking the sync adapter…");
 
 		const plainTheme = { fg: (_color: string, text: string) => text };
-		assert.equal(entryRenderer?.({ data: activity?.data }, { expanded: false }, plainTheme), undefined);
-		const collapsed = entryRenderer?.({ data: run?.data }, { expanded: false }, plainTheme)?.render(120).join("\n") ?? "";
-		assert.match(collapsed, /◆ Worked.*1 step/);
+		assert.equal(entryRenderer?.({ id: "e-act", data: activity?.data }, { expanded: false }, plainTheme), undefined);
+		const comp = entryRenderer?.({ id: "e-run", data: run?.data }, { expanded: false }, plainTheme);
+		const collapsed = comp?.render(120).join("\n") ?? "";
+		assert.match(collapsed, /▸ Worked.*1 step/);
 		assert.doesNotMatch(collapsed, /Checking the sync adapter/);
-		const expanded = entryRenderer?.({ data: run?.data }, { expanded: true }, plainTheme)?.render(120).join("\n") ?? "";
-		assert.match(expanded, /◆ Worked.*1 step/);
+
+		// Left-click toggles just this run summary open and closed without Ctrl+O.
+		const clickEvent = { type: "click", button: "left", x: 0, y: 0, screenX: 0, screenY: 0, width: 120, height: 1 };
+		assert.deepEqual(comp.handleMouse(clickEvent), { handled: true });
+		const clickedOpen = comp.render(120).join("\n");
+		assert.match(clickedOpen, /▾ Worked.*1 step/);
+		assert.match(clickedOpen, /Checking the sync adapter/);
+		assert.match(clickedOpen, /read\(/);
+		assert.deepEqual(comp.handleMouse(clickEvent), { handled: true });
+		assert.doesNotMatch(comp.render(120).join("\n"), /Checking the sync adapter/);
+
+		const expanded = entryRenderer?.({ id: "e-run", data: run?.data }, { expanded: true }, plainTheme)?.render(120).join("\n") ?? "";
+		assert.match(expanded, /▾ Worked.*1 step/);
 		assert.match(expanded, /Checking the sync adapter/);
 		assert.match(expanded, /read\(/);
 
