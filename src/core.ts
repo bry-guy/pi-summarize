@@ -88,6 +88,13 @@ export function progressLine(toolName: string, partialResult: unknown): string |
 	return time ? `${clip(last.slice(0, -time.length), 90 - time.length)}${time}` : clip(last, 90);
 }
 
+/** Format a finished run's summary label, matching pi-web ("Worked 14s · 4 steps"). */
+export function formatRunLabel(durationMs: number, steps: number): string {
+	const secs = Math.round(Math.max(0, durationMs) / 1000);
+	const worked = secs >= 60 ? `Worked ${Math.floor(secs / 60)}m ${secs % 60}s` : secs >= 1 ? `Worked ${secs}s` : "Worked";
+	return [worked, steps > 0 ? `${steps} ${steps === 1 ? "step" : "steps"}` : ""].filter(Boolean).join(" · ");
+}
+
 /** A progress line plus the tool's elapsed time, unless the line already carries one. */
 export const withElapsed = (line: string, secs: number): string => (ELAPSED.test(line) ? line : `${line} · ${secs}s`);
 

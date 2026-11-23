@@ -21,7 +21,9 @@ describe("extension wiring", () => {
 	let names: string[];
 	let streamCalls: { provider: string; id: string; reasoning?: string; prompt: string }[];
 	let working: (string | undefined)[];
+	let hiddenThinkingLabels: (string | undefined)[];
 	let emitted: { channel: string; payload: any }[];
+	let entryRenderer: ((entry: any, opts: { expanded: boolean }, theme: any) => any) | undefined;
 	let sessionName: string | undefined;
 	let ctx: any;
 
@@ -31,7 +33,7 @@ describe("extension wiring", () => {
 		const pi = {
 			on: (name: string, fn: any) => (handlers[name] = fn),
 			events: { emit: (channel: string, payload: any) => emitted.push({ channel, payload }) },
-			registerEntryRenderer: () => {},
+			registerEntryRenderer: (_type: string, fn: any) => (entryRenderer = fn),
 			registerToolRenderer: () => {},
 			appendEntry: (type: string, data: any) => appended.push({ type, data }),
 			setSessionName: (n: string) => {
@@ -48,12 +50,17 @@ describe("extension wiring", () => {
 		names = [];
 		streamCalls = [];
 		working = [];
+		hiddenThinkingLabels = [];
 		emitted = [];
 		sessionName = name;
 		ctx = {
 			hasUI: true,
 			model: { provider: "openai", id: "gpt-session" },
-			ui: { setWorkingMessage: (m?: string) => working.push(m), notify: () => {}, setHiddenThinkingLabel: () => {} },
+			ui: {
+				setWorkingMessage: (m?: string) => working.push(m),
+				notify: () => {},
+				setHiddenThinkingLabel: (l?: string) => hiddenThinkingLabels.push(l),
+			},
 			sessionManager: { getBranch: () => [] },
 			modelRegistry: {
 				find: (provider: string, id: string) => ({ provider, id }),
@@ -83,6 +90,7 @@ describe("extension wiring", () => {
 		await sleep(20);
 		await handlers.turn_end({ type: "turn_end" }, ctx);
 
+		assert.deepEqual(hiddenThinkingLabels, [""], "hides the collapsed Thinking... label by default");
 		assert.equal(streamCalls[0].provider, "anthropic");
 		assert.equal(streamCalls[0].id, "claude-haiku-5-5");
 		assert.equal(streamCalls[0].reasoning, "low");
@@ -97,6 +105,23 @@ describe("extension wiring", () => {
 		assert.deepEqual(activity?.data.toolCallIds, ["t1"]);
 
 		await handlers.agent_end({ type: "agent_end", messages: [] }, ctx);
+		const run = appended.find((e) => e.data.kind === "run");
+		assert.equal(run?.type, "pi-summarize");
+		assert.equal(run?.data.text, undefined, "run entry omits text so pi-web summaryRecord ignores it");
+		assert.equal(run?.data.steps, 1);
+		assert.equal(run?.data.items.length, 1);
+		assert.equal(run?.data.items[0].text, "Checking the sync adapter…");
+
+		const plainTheme = { fg: (_color: string, text: string) => text };
+		assert.equal(entryRenderer?.({ data: activity?.data }, { expanded: false }, plainTheme), undefined);
+		const collapsed = entryRenderer?.({ data: run?.data }, { expanded: false }, plainTheme)?.render(120).join("\n") ?? "";
+		assert.match(collapsed, /◆ Worked.*1 step/);
+		assert.doesNotMatch(collapsed, /Checking the sync adapter/);
+		const expanded = entryRenderer?.({ data: run?.data }, { expanded: true }, plainTheme)?.render(120).join("\n") ?? "";
+		assert.match(expanded, /◆ Worked.*1 step/);
+		assert.match(expanded, /Checking the sync adapter/);
+		assert.match(expanded, /read\(/);
+
 		ctx.sessionManager.getBranch = () => [
 			{ type: "message", message: { role: "user", content: "fix sync" } },
 			{ type: "message", message: { role: "assistant", content: [{ type: "text", text: "On it." }] } },
