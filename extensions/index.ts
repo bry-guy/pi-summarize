@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Box, Container, Text } from "@earendil-works/pi-tui";
-import { ActivityTracker, autoTitle, resolveConfig, type SummarizeConfig } from "../src/core.ts";
+import { ActivityTracker, autoTitle, formatRunLabel, resolveConfig, type ActivityRecord, type SummarizeConfig } from "../src/core.ts";
 
 type Ctx = ExtensionContext;
 type Context = Parameters<Ctx["modelRegistry"]["streamSimple"]>[1];
@@ -58,10 +58,16 @@ export default function (pi: ExtensionAPI) {
 	let cfg: SummarizeConfig = resolveConfig({}, {});
 	let tracker: ActivityTracker | undefined;
 	let titling = false;
+	let runStartedAt: number | undefined;
+	let runItems: ActivityRecord[] = [];
 
 	pi.on("session_start", async (_event, ctx) => {
 		live = ctx;
 		cfg = resolveConfig(loadSettings(), process.env);
+		runStartedAt = undefined;
+		runItems = [];
+		// Blank label makes pi omit hidden thinking rows (and their spacers) altogether; Ctrl+T still reveals thinking.
+		ctx.ui.setHiddenThinkingLabel(cfg.activity ? "" : undefined);
 		tracker?.stop();
 		tracker = new ActivityTracker({
 			complete: (prompt, signal) => complete(live!, cfg, prompt, signal, 60),
@@ -73,6 +79,7 @@ export default function (pi: ExtensionAPI) {
 				const data = { kind: "activity", ...entry };
 				pi.appendEntry("pi-summarize", data);
 				pi.events?.emit("pi-summarize:activity", { data });
+				runItems.push(entry);
 			},
 		});
 		if (cfg.model && !resolveModel(ctx, cfg.model) && ctx.hasUI) {
@@ -82,6 +89,8 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("before_agent_start", async (event, ctx) => {
 		live = ctx;
+		runStartedAt = Date.now();
+		runItems = [];
 		if (cfg.activity) tracker?.begin("prompt" in event ? event.prompt : undefined);
 	});
 
@@ -122,7 +131,28 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("agent_end", async (_event, ctx) => {
 		live = ctx;
-		if (cfg.activity) tracker?.stop();
+		if (cfg.activity) {
+			tracker?.stop();
+			if (runItems.length > 0) {
+				const steps = runItems.reduce((sum, item) => sum + item.toolCallIds.length, 0);
+				const durationMs = runStartedAt ? Math.max(0, Date.now() - runStartedAt) : 0;
+				// Omit `text` so hosts that read activity records (e.g. pi-web) ignore this TUI rollup entry.
+				pi.appendEntry("pi-summarize", {
+					kind: "run",
+					durationMs,
+					steps,
+					items: runItems.map(({ text, source, continues, tools }) => ({
+						text,
+						source,
+						...(continues ? { continues: true as const } : {}),
+						...(tools?.length ? { tools } : {}),
+					})),
+					at: Date.now(),
+				});
+			}
+		}
+		runStartedAt = undefined;
+		runItems = [];
 	});
 
 	// agent_settled, not agent_end: print mode can exit right after agent_end, and this must finish first.
@@ -159,26 +189,44 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("session_shutdown", async () => {
 		tracker?.stop();
+		runStartedAt = undefined;
+		runItems = [];
 	});
 }
 
 type Renderers = NonNullable<ReturnType<Parameters<ExtensionAPI["registerToolRenderer"]>[0]>>;
-type Data = { kind?: string; text?: string; source?: string; tools?: string[]; continues?: boolean };
+type RunItem = { text: string; source?: string; continues?: boolean; tools?: string[] };
+type Data = {
+	kind?: string;
+	text?: string;
+	source?: string;
+	tools?: string[];
+	continues?: boolean;
+	durationMs?: number;
+	steps?: number;
+	items?: RunItem[];
+};
 
 /**
- * Collapsed (default): tool rows render nothing, so the summary lines stand in for them.
- * Expanded (Ctrl+O): tools render normally, and summaries show what they summarized.
+ * Collapsed (default): tool rows and per-step activity entries render nothing; each finished run renders one
+ * `Worked Xs · N steps` line. Expanded (Ctrl+O): tool rows render normally and the run line expands its steps.
  */
 function registerRenderers(pi: ExtensionAPI, enabled: () => boolean) {
 	pi.registerEntryRenderer<Data>("pi-summarize", (entry, { expanded }, theme) => {
 		const d = entry.data;
 		// undefined, not an empty component: pi adds a spacer line before every component it is given.
-		if (d?.kind !== "activity" || !d.text || !enabled()) return undefined;
-		if ((d.source === "fallback" || d.continues) && !expanded) return undefined; // generic lines and merged steps add nothing at a glance
+		if (!enabled() || d?.kind !== "run") return undefined;
+		const label = formatRunLabel(Number(d.durationMs) || 0, Number(d.steps) || 0);
 		const box = new Box(1, 0);
-		box.addChild(new Text(d.continues ? theme.fg("dim", "  ↳ same goal") : `${theme.fg("accent", "◆")} ${theme.fg("muted", d.text)}`, 0, 0));
+		box.addChild(new Text(`${theme.fg("accent", "◆")} ${theme.fg("muted", label)}`, 0, 0));
 		if (expanded) {
-			for (const t of d.tools ?? []) box.addChild(new Text(theme.fg("dim", `  ${t}`), 0, 0));
+			for (const item of d.items ?? []) {
+				const line = item.continues
+					? theme.fg("dim", "  ↳ same goal")
+					: `  ${theme.fg("accent", "◆")} ${theme.fg("muted", item.text)}`;
+				box.addChild(new Text(line, 0, 0));
+				for (const t of item.tools ?? []) box.addChild(new Text(theme.fg("dim", `    ${t}`), 0, 0));
+			}
 		}
 		return box;
 	});

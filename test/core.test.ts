@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { ActivityTracker, autoTitle, cleanLine, cleanTitle, fallbackLine, progressLine, resolveConfig, similarLine, withElapsed } from "../src/core.ts";
+import { ActivityTracker, autoTitle, cleanLine, cleanTitle, fallbackLine, formatRunLabel, progressLine, resolveConfig, similarLine, withElapsed } from "../src/core.ts";
 
 const flush = () => new Promise((r) => setImmediate(r));
 
@@ -381,6 +381,12 @@ describe("tool progress", () => {
 		assert.equal(records.length, 0);
 		tracker.stop();
 	});
+});
+
+it("formats finished run summary labels", () => {
+	assert.equal(formatRunLabel(400, 1), "Worked · 1 step");
+	assert.equal(formatRunLabel(14_200, 4), "Worked 14s · 4 steps");
+	assert.equal(formatRunLabel(125_000, 7), "Worked 2m 5s · 7 steps");
 });
 
 it("a subagent tool's progress leaves the summarized line alone", async () => {
