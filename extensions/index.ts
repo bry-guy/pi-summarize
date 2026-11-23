@@ -65,8 +65,15 @@ export default function (pi: ExtensionAPI) {
 		tracker?.stop();
 		tracker = new ActivityTracker({
 			complete: (prompt, signal) => complete(live!, cfg, prompt, signal, 60),
-			show: (text) => live?.ui.setWorkingMessage(text),
-			record: (entry) => pi.appendEntry("pi-summarize", { kind: "activity", ...entry }),
+			show: (text) => {
+				live?.ui.setWorkingMessage(text);
+				pi.events?.emit("pi-summarize:working", { text: text ?? null });
+			},
+			record: (entry) => {
+				const data = { kind: "activity", ...entry };
+				pi.appendEntry("pi-summarize", data);
+				pi.events?.emit("pi-summarize:activity", { data });
+			},
 		});
 		if (cfg.model && !resolveModel(ctx, cfg.model) && ctx.hasUI) {
 			ctx.ui.notify(`pi-summarize: model "${cfg.model}" not found; using fallback lines`, "warning");
